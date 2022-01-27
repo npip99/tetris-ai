@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "rootDir": "src",
+    "outDir": "build",
+    "target": "es6",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "lib": ["es6"],
+    "allowJs": true,
+    "composite": true,
+
+    "incremental": true,
+    "tsBuildInfoFile": "./build/global-buildinfo-file",
+
+    "sourceMap": true,
+    "sourceRoot": "src",
+    "declaration": true,
+    "declarationMap": true,
+
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "references": [
+    {"path": "../tetris-game"}
+  ]
+}

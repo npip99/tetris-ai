@@ -1,0 +1,9 @@
+{
+  "references": [
+    { "path": "./tetris-game" },
+    { "path": "./tetris-ai" }
+  ],
+  "files": [],
+  "include": [],
+  "exclude": ["**/node_modules"]
+}

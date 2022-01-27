@@ -1,0 +1,13 @@
+{
+  "name": "tetris-game",
+  "version": "1.0.0",
+  "description": "Contains the rules of Tetris",
+  "author": "",
+
+  "main": "build/index.js",
+  "typings": "build/index.d.ts",
+  "type": "commonjs",
+
+  "devDependencies": {
+  }
+}

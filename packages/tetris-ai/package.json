@@ -1,0 +1,17 @@
+{
+  "name": "tetris-ai",
+  "version": "1.0.0",
+  "description": "Contains the Tetris AI",
+  "author": "",
+
+  "main": "build/index.js",
+  "typings": "build/index.d.ts",
+  "type": "commonjs",
+
+  "dependencies": {
+    "tetris-game": "1.0.0"
+  },
+
+  "devDependencies": {
+  }
+}
