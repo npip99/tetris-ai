@@ -66,6 +66,10 @@ class NavBar extends Component {
         link: "/home",
       },
       {
+        title: "Tetris",
+        link: "/tetris",
+      },
+      {
         title: "About",
         link: "/about",
       },

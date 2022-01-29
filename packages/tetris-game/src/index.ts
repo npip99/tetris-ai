@@ -1,4 +1,6 @@
-export const a = 2
+import { TetrisState } from "./TetrisState";
 
-export const b = 2
 
+export {
+    TetrisState
+};

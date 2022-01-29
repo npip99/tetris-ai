@@ -7,6 +7,7 @@ import {
   Redirect
 } from "react-router-dom";
 import Home from './pages/Home';
+import Tetris from './pages/Tetris';
 import About from './pages/About';
 import NotFound from './pages/NotFound';
 
@@ -21,6 +22,7 @@ ReactDOM.render(
       <Switch>
         <Redirect exact from="/" to="/home"/>
         <Route exact path="/home" component={Home}/>
+        <Route exact path="/tetris" component={Tetris}/>
         <Route exact path="/about" component={About}/>
         <Route component={NotFound}/>
       </Switch>

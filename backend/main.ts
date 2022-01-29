@@ -1,9 +1,5 @@
 import express from  'express';
 import session from 'express-session';
-import {a, b} from 'tetris-game';
-import {c, d} from 'tetris-ai';
-
-console.log(a, c);
 
 const PORT = 8081;
 
