@@ -1,6 +1,6 @@
-import { TetrisState } from "./TetrisState";
+import { NESTetrisGame } from "./NESTetris";
 
 
 export {
-    TetrisState
+    NESTetrisGame
 };

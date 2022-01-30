@@ -1,6 +1,7 @@
-import React, { Component, CSSProperties } from 'react';
+import React, { Component, CSSProperties, createRef, useEffect } from 'react';
 import NavBar from '../components/NavBar';
-import { TetrisState } from 'tetris-game';
+import { NESTetrisGame } from 'tetris-game';
+import TetrisRenderer from '../components/TetrisRenderer';
 
 const styles: Record<string, CSSProperties> = {
   root: {},
@@ -9,90 +10,88 @@ const styles: Record<string, CSSProperties> = {
     margin: "0",
     padding: "10pt 20pt",
     width: "100%",
-    height: "305pt",
+    height: "100%",
 
     boxShadow: "0px 3px 5px 0px #ddd, 10px 3px 5px 0px #ddd, -10px 3px 5px 0px #ddd",
   },
 };
 
-class TetrisRenderer extends Component {
-  render() {
-    let rows = [];
-
-    console.log("RERENDER");
-
-    let tetris_state: TetrisState = this.props.tetris_state;
-    for(let y = 0; y < 20; y++) {
-      let res = "";
-      for(let x = 0; x < 10; x++) {
-        res += tetris_state.getRenderableBlock(x, y) + " ";
-      }
-      rows.push((
-        <p>
-          {res}
-        </p>
-      ));
-    }
-
-    return (
-      <p>
-        {rows}
-      </p>
-    );
-  }
-}
-
 class Tetris extends Component {
+  current_keypresses: Record<string, Boolean>;
+
   constructor(props) {
     super(props);
     this.state = {
-      tetris_state: new TetrisState(),
+      tetris_state: new NESTetrisGame(0),
     };
+
+    this.current_keypresses = {};
+
+    let interval_iterate = setInterval(() => {
+      this.setState((state, props) => {
+        let tetris_state = this.state.tetris_state;
+
+        // Go through all the current keypresses,
+        for(let key in this.current_keypresses) {
+          // If the key is pressed, pass it to the tetris state
+          if (this.current_keypresses[key]) {
+            switch(key) {
+              case 'ArrowLeft':
+                tetris_state.pressLeft();
+                break;
+              case 'ArrowRight':
+                tetris_state.pressRight();
+                break;
+              case 'ArrowDown':
+                tetris_state.pressDown();
+                break;
+              case 'z':
+                tetris_state.pressCCW();
+                break;
+              case 'x':
+                tetris_state.pressCW();
+                break;
+            }
+          }
+        }
+
+        // Iterate the tetris state
+        tetris_state.iterate();
+        return {
+          tetris_state
+        };
+      });
+    }, 16.66);
   }
 
-  on_left() {
-    this.setState((state, props) => {
-      state.tetris_state.left();
-      return {
-        tetris_state: state.tetris_state,
-      };
-    });
+  onKeyDown(e) {
+    switch(e.key) {
+    case 'ArrowLeft':
+    case 'ArrowRight':
+    case 'ArrowDown':
+    case 'z':
+    case 'x':
+      e.preventDefault();
+      this.current_keypresses[e.key] = true;
+      break;
+    default:
+      break;
+    }
   }
 
-  on_right() {
-    this.setState((state, props) => {
-      state.tetris_state.right();
-      return {
-        tetris_state: state.tetris_state,
-      };
-    });
-  }
-
-  on_ccw() {
-    this.setState((state, props) => {
-      state.tetris_state.rotateCCW();
-      return {
-        tetris_state: state.tetris_state,
-      };
-    });
-  }
-
-  on_cw() {
-    this.setState((state, props) => {
-      state.tetris_state.rotateCW();
-      return {
-        tetris_state: state.tetris_state,
-      };
-    });
-  }
-
-  on_down() {
-    this.setState((state, props) => {
-      state.tetris_state.drop();
-      return {
-        tetris_state: state.tetris_state,
-      };
-    });
+  onKeyUp(e) {
+    switch(e.key) {
+    case 'ArrowLeft':
+    case 'ArrowRight':
+    case 'ArrowDown':
+    case 'z':
+    case 'x':
+      e.preventDefault();
+      this.current_keypresses[e.key] = false;
+      break;
+    default:
+      break;
+    }
   }
 
   render() {
@@ -101,12 +100,13 @@ class Tetris extends Component {
         <NavBar title="Tetris"/>
         <div style={styles.main}>
           <h1>Tetris Page!</h1>
-          <button onClick={this.on_left.bind(this)}>Left</button>
-          <button onClick={this.on_right.bind(this)}>Right</button>
-          <button onClick={this.on_ccw.bind(this)}>CCW</button>
-          <button onClick={this.on_cw.bind(this)}>CW</button>
-          <button onClick={this.on_down.bind(this)}>Down</button>
-          <TetrisRenderer tetris_state={this.state.tetris_state}/>
+          <div
+            onKeyDown={this.onKeyDown.bind(this)}
+            onKeyUp={this.onKeyUp.bind(this)}
+            tabIndex={-1}
+          >
+            <TetrisRenderer tetris_state={this.state.tetris_state}/>
+          </div>
         </div>
       </div>
     );

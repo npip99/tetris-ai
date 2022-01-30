@@ -33,9 +33,9 @@ class AbstractTetrisPiece {
             }
         }
 
-        // Give this abstract piece a Unique ID
-        this.pieceID = TotalNumAbstractPieces;
+        // Give this abstract piece a Unique Positive ID
         TotalNumAbstractPieces += 1;
+        this.pieceID = TotalNumAbstractPieces;
     }
 
     getDefaultOrientation() {

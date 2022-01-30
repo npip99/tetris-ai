@@ -1,8 +1,5 @@
 import { AbstractTetrisPiece } from "./TetrisPiece";
 
-const TETRIS_WIDTH = 10
-const TETRIS_HEIGHT = 20
-
 enum TetrisRotation {
     ROTATE_CW,
     ROTATE_CCW,
@@ -39,9 +36,13 @@ class TetrisPiece {
 
 class TetrisBoard {
     board: Uint8Array;
+    width: number;
+    height: number;
 
-    constructor() {
-        this.board = new Uint8Array(TETRIS_WIDTH * TETRIS_HEIGHT);
+    constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+        this.board = new Uint8Array(width * height);
     }
 
     placePiece(piece: TetrisPiece) {
@@ -56,19 +57,16 @@ class TetrisBoard {
                 this.setSquare(x, y, piece.abstractTetrisPiece.pieceID);
             }
         }
-
-        // Clear any lines created by the placed piece
-        this.clearLines();
     }
 
     // Check if the location is valid (Including the 2line buffer)
     isValidLocation(x: number, y: number) {
-        return 0 <= x && x < TETRIS_WIDTH && -2 <= y && y < TETRIS_HEIGHT;
+        return 0 <= x && x < this.width && -2 <= y && y < this.height;
     }
 
     // Check if the location is in-bounds (i.e., a visible gridcell)
     inBounds(x: number, y: number) {
-        return 0 <= x && x < TETRIS_WIDTH && 0 <= y && y < TETRIS_HEIGHT;
+        return 0 <= x && x < this.width && 0 <= y && y < this.height;
     }
 
     // Check if the piece is valid
@@ -126,23 +124,25 @@ class TetrisBoard {
 
     // Access the board
     getSquareTaken(x: number, y: number) {
-        return this.board[y * TETRIS_WIDTH + x] != 0;
+        return this.board[y * this.width + x] != 0;
     }
 
     // Access the board
     getSquare(x: number, y: number) {
-        return this.board[y * TETRIS_WIDTH + x];
+        return this.board[y * this.width + x];
     }
 
     // Access the board
     setSquare(x: number, y: number, id: number) {
-        this.board[y * TETRIS_WIDTH + x] = id;
+        this.board[y * this.width + x] = id;
     }
 
-    // Clear any lines
+    // Clear any lines, returning the number of lines cleared
     clearLines() {
+        let num_lines_cleared = 0;
+
         // The line to start trying to clear lines from
-        let starting_line = TETRIS_HEIGHT - 1;
+        let starting_line = this.height - 1;
 
         // We want to read from a higher line,
         // And write to a lower line, when clearing lines
@@ -155,7 +155,7 @@ class TetrisBoard {
             if (reading_line >= 0) {
                 // Check if the reading line's row is full
                 let is_row_full = true;
-                for(let x = 0; x < TETRIS_WIDTH; x++) {
+                for(let x = 0; x < this.width; x++) {
                     // If any square isn't taken, the row isn't full
                     if (!this.getSquareTaken(x, reading_line)) {
                         is_row_full = false;
@@ -165,7 +165,8 @@ class TetrisBoard {
                 // If the row was full, skip to scan the next reading_line,
                 // since that line is considered "cleared"
                 if (is_row_full) {
-                    reading_line -= 1;
+                    reading_line--;
+                    num_lines_cleared++;
                     continue;
                 }
             }
@@ -173,20 +174,27 @@ class TetrisBoard {
             // If the reading line, is above the writing_line
             if (reading_line < 0) {
                 // Wipe the line if we've run out of lines to read from
-                for(let x = 0; x < TETRIS_WIDTH; x++) {
+                for(let x = 0; x < this.width; x++) {
                     this.setSquare(x, writing_line, 0);
                 }
+                writing_line--;
             } else if (reading_line < writing_line) {
                 // if we're still readling lines,
                 // memcpy from reading_line to writing_line to shift it down
-                for(let x = 0; x < TETRIS_WIDTH; x++) {
+                for(let x = 0; x < this.width; x++) {
                     this.setSquare(x, writing_line, this.getSquare(x, reading_line));
                 }
+                reading_line--;
+                writing_line--;
+            } else {
+                // reading_line == writing_line, the memcpy is identity
+                reading_line--;
+                writing_line--;
             }
-
-            // Now we'll try writing to the next line
-            writing_line -= 1
         }
+
+        // Return the # of lines cleared
+        return num_lines_cleared;
     }
 };
 
