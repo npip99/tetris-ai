@@ -22,7 +22,7 @@ class Tetris extends Component {
   constructor(props) {
     super(props);
     this.state = {
-      tetris_state: new NESTetrisGame(4),
+      tetris_state: new NESTetrisGame(3),
     };
 
     this.current_keypresses = {};
