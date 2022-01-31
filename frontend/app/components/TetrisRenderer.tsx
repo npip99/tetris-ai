@@ -40,6 +40,13 @@ const nes_tetris_audio_filepaths = {
 };
 const nes_tetris_audio = _.mapValues(nes_tetris_audio_filepaths, audio_filepath => new Audio("assets/sounds/" + audio_filepath));
 
+let tetris_theme = new Audio("assets/sounds/theme.mp3");
+setTimeout(() => {
+    tetris_theme.loop = true;
+    tetris_theme.volume = 0.4;
+    tetris_theme.play();
+}, 2000);
+
 const play_audio = (desiredAudioType: NESTetrisAudioType) => {
     if (desiredAudioType == NESTetrisAudioType.NONE) {
         return;
