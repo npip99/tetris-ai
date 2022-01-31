@@ -1,5 +1,6 @@
 import React, { Component, CSSProperties, createRef } from 'react';
-import { NESTetrisGame } from 'tetris-game';
+import { NESTetrisGame, NESTetrisAudioType } from 'tetris-game';
+import _ from 'lodash';
 
 // NES Color Palette
 const nesColors = [[0x7C, 0x7C, 0x7C],[0x00, 0x00, 0xFC],[0x00, 0x00, 0xBC],[0x44, 0x28, 0xBC],[0x94, 0x00, 0x84],[0xA8, 0x00, 0x20],[0xA8, 0x10, 0x00],[0x88, 0x14, 0x00],[0x50, 0x30, 0x00],[0x00, 0x78, 0x00],[0x00, 0x68, 0x00],[0x00, 0x58, 0x00],[0x00, 0x40, 0x58],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00],[0xBC, 0xBC, 0xBC],[0x00, 0x78, 0xF8],[0x00, 0x58, 0xF8],[0x68, 0x44, 0xFC],[0xD8, 0x00, 0xCC],[0xE4, 0x00, 0x58],[0xF8, 0x38, 0x00],[0xE4, 0x5C, 0x10],[0xAC, 0x7C, 0x00],[0x00, 0xB8, 0x00],[0x00, 0xA8, 0x00],[0x00, 0xA8, 0x44],[0x00, 0x88, 0x88],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00],[0xF8, 0xF8, 0xF8],[0x3C, 0xBC, 0xFC],[0x68, 0x88, 0xFC],[0x98, 0x78, 0xF8],[0xF8, 0x78, 0xF8],[0xF8, 0x58, 0x98],[0xF8, 0x78, 0x58],[0xFC, 0xA0, 0x44],[0xF8, 0xB8, 0x00],[0xB8, 0xF8, 0x18],[0x58, 0xD8, 0x54],[0x58, 0xF8, 0x98],[0x00, 0xE8, 0xD8],[0x78, 0x78, 0x78],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00],[0xFC, 0xFC, 0xFC],[0xA4, 0xE4, 0xFC],[0xB8, 0xB8, 0xF8],[0xD8, 0xB8, 0xF8],[0xF8, 0xB8, 0xF8],[0xF8, 0xA4, 0xC0],[0xF0, 0xD0, 0xB0],[0xFC, 0xE0, 0xA8],[0xF8, 0xD8, 0x78],[0xD8, 0xF8, 0x78],[0xB8, 0xF8, 0xB8],[0xB8, 0xF8, 0xD8],[0x00, 0xFC, 0xFC],[0xF8, 0xD8, 0xF8],[0x00, 0x00, 0x00],[0x00, 0x00, 0x00]];
@@ -25,6 +26,86 @@ enum ColorPalette {
     COLOR_PALETTE_A = 2,
     COLOR_PALETTE_B = 3,
 };
+
+// https://www.zophar.net/music/nintendo-nes-nsf/tetris-1989-Nintendo
+const nes_tetris_audio_filepaths = {
+    [NESTetrisAudioType.SHIFT]: "nes_4.mp3",
+    [NESTetrisAudioType.ROTATION]: "nes_6.mp3",
+    [NESTetrisAudioType.LEVEL_UP]: "nes_7.mp3",
+    [NESTetrisAudioType.LOCK_PIECE]: "nes_8.mp3",
+    // https://www.youtube.com/watch?v=Xm9O2iJLWxY
+    [NESTetrisAudioType.TETRIS]: "tetris_sound.mp3",
+    [NESTetrisAudioType.LINECLEAR]: "nes_11.mp3",
+    [NESTetrisAudioType.GAMEOVER_CRASH]: "nes_14.mp3",
+};
+const nes_tetris_audio = _.mapValues(nes_tetris_audio_filepaths, audio_filepath => new Audio("assets/sounds/" + audio_filepath));
+
+const play_audio = (desiredAudioType: NESTetrisAudioType) => {
+    if (desiredAudioType == NESTetrisAudioType.NONE) {
+        return;
+    }
+    if (!(desiredAudioType in nes_tetris_audio)) {
+        console.error("Unknown audio type!");
+        return;
+    }
+
+    // Routine to fade-out the audio, and a callback when done
+    // Fading-out prevents audio static pops
+    let fadeOutAudio = (audioElem: HTMLAudioElement, callback: any, our_id?: number) => {
+        // If someone else is fading it out, wait for them
+        if (audioElem["fading_out_id"] != our_id) {
+            setTimeout(() => {
+                fadeOutAudio(audioElem, callback, our_id);
+            }, 1);
+            return;
+        }
+
+        // If this is our first call, make an ID
+        if(our_id == undefined) {
+            our_id = Math.random();
+            audioElem["fading_out_id"] = our_id;
+        }
+
+        // Fade-out is instant if the audio is already done
+        if (audioElem.ended) {
+            audioElem.volume = 0;
+        }
+
+        // We try fading out by 8%,
+        audioElem.volume = Math.max(audioElem.volume - 0.08, 0);
+        if (audioElem.volume > 0) {
+            // And call again in 1ms if we're not done fading out
+            setTimeout(() => {
+                fadeOutAudio(audioElem, callback, our_id);
+            }, 1);
+        } else {
+            // Done fading out!
+            audioElem["fading_out_id"] = undefined;
+            // Call the (optional) callback when we're done
+            callback && callback();
+        }
+    };
+
+    // Fade out everything else to volume 0, if they're playing
+    for(let otherAudioType in nes_tetris_audio) {
+        if (otherAudioType != "" + desiredAudioType) {
+            let audioElem: HTMLAudioElement = nes_tetris_audio[otherAudioType];
+            if (audioElem.volume > 0) {
+                fadeOutAudio(audioElem, null);
+            }
+        }
+    }
+
+    // Play this audio
+    let audio_object = nes_tetris_audio[desiredAudioType];
+    audio_object.loop = false;
+    fadeOutAudio(audio_object, () => {
+        audio_object.pause();
+        audio_object.currentTime = 0;
+        audio_object.volume = 1;
+        audio_object.play();
+    })
+}
 
 // black = 0
 // white = 1
@@ -67,8 +148,9 @@ class TetrisRenderer extends Component {
     super(props);
 
     let image_paths = {
-        background_image: "images/tetris_background.png",
-        numbers: "images/numbers.png",
+        flashing_background_image: "assets/images/tetris_background_flashing.png",
+        background_image: "assets/images/tetris_background.png",
+        numbers: "assets/images/numbers.png",
     };
 
     this.images = {};
@@ -118,7 +200,7 @@ class TetrisRenderer extends Component {
 
         this.forceUpdate();
     };
-    stats_image.src = "images/statistics_background.png";
+    stats_image.src = "assets/images/statistics_background.png";
 
     this.state = {
       canvasRef: createRef(),
@@ -129,6 +211,9 @@ class TetrisRenderer extends Component {
   
   // Updates the canvas
   updateCanvas() {
+    // Play audio, if there is any
+    play_audio(this.props.tetris_state.pendingAudio);
+
     // How much to scale each pixel by
     const SCALING_FACTOR = 3;
 
@@ -204,7 +289,11 @@ class TetrisRenderer extends Component {
     ctx.imageSmoothingEnabled = false;
 
     // Draw the backround image
-    ctx.drawImage(this.images.background_image, 0, 0, this.images.background_image.width * SCALING_FACTOR, this.images.background_image.height * SCALING_FACTOR);
+    if (this.props.tetris_state.gameboardFlashing) {
+        ctx.drawImage(this.images.flashing_background_image, 0, 0, this.images.flashing_background_image.width * SCALING_FACTOR, this.images.flashing_background_image.height * SCALING_FACTOR);
+    } else {
+        ctx.drawImage(this.images.background_image, 0, 0, this.images.background_image.width * SCALING_FACTOR, this.images.background_image.height * SCALING_FACTOR);
+    }
 
     // Dimensions of the tetris blocks and play area
     let tetris_block_width = 8 * SCALING_FACTOR;

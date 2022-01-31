@@ -7,7 +7,7 @@ let HTMLWebpackPluginConfig = new HTMLWebpackPlugin({
 let CopyWebpackPlugin = require('copy-webpack-plugin');
 let CopyWebpackPluginConfig = new CopyWebpackPlugin({
   patterns: [
-    {from:'images', to:'images'}
+    {from:'assets', to:'assets'}
   ],
 });
 

@@ -1,6 +1,7 @@
-import { NESTetrisGame } from "./NESTetris";
+import { NESTetrisGame, NESTetrisAudioType } from "./NESTetris";
 
 
 export {
-    NESTetrisGame
+    NESTetrisGame,
+    NESTetrisAudioType
 };
