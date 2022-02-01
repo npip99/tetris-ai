@@ -17,6 +17,11 @@ const styles: Record<string, CSSProperties> = {
     width: "50px",
     textIndent: "10px",
   },
+
+  rendererContainer: {
+    // Remove the blue border
+    outline: 'none',
+  }
 };
 
 class Tetris extends Component {
@@ -25,7 +30,7 @@ class Tetris extends Component {
   constructor(props) {
     super(props);
     this.state = {
-      tetris_state: new NESTetrisGame(7),
+      tetris_state: new NESTetrisGame(0),
       paused: false,
     };
 
@@ -107,7 +112,7 @@ class Tetris extends Component {
     this.setState(() => {
       return {
         paused: false,
-        tetris_state: new NESTetrisGame(e.target.value),
+        tetris_state: new NESTetrisGame(parseInt(e.target.value)),
       };
     });
   }
@@ -127,6 +132,14 @@ class Tetris extends Component {
       this.setState((state, props) => {
         return {
           paused: !state.paused,
+        };
+      });
+      break;
+    case 'R':
+      e.preventDefault();
+      this.setState((state, props) => {
+        return {
+          tetris_state: new NESTetrisGame(state.tetris_state.level),
         };
       });
       break;
@@ -159,7 +172,7 @@ class Tetris extends Component {
           <p>
             Level:&nbsp;
             <select name="level" id="level-select" style={styles.levelSelect} onChange={this.onNewLevel.bind(this)}>
-              {Array(20).fill(0).map((val, i) => <option value={i}>{i}</option>)}
+              {Array(21).fill(0).map((_, i) => i < 20 ? i : 29).map(v => <option value={v}>{v}</option>)}
             </select>
           </p>
           <div
@@ -167,6 +180,7 @@ class Tetris extends Component {
             onKeyUp={this.onKeyUp.bind(this)}
             onBlur={this.onLoseFocus.bind(this)}
             tabIndex={-1}
+            style={styles.rendererContainer}
           >
             <TetrisRenderer tetris_state={this.state.tetris_state} paused={this.state.paused}/>
           </div>
