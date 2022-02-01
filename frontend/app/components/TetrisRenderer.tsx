@@ -49,6 +49,9 @@ const nes_tetris_audio = _.mapValues(nes_tetris_audio_filepaths, audio_filepath 
     return audio_device;
 });
 
+// If true, high priority audio must silence other audio
+const USING_ORIGINAL_NES_AUDIO_LIMIT = false;
+
 const play_audio = (desiredAudioType: NESTetrisAudioType) => {
     if (desiredAudioType == NESTetrisAudioType.NONE) {
         return;
@@ -95,18 +98,20 @@ const play_audio = (desiredAudioType: NESTetrisAudioType) => {
         }
     };
 
-    // Fade out everything else to volume 0, if they're playing
+    // Fade out everything else to volume 0, if something is playing
     let audio_overriden = false;
     for(let otherAudioType in nes_tetris_audio) {
         if (otherAudioType != "" + desiredAudioType) {
             let audioElem: HTMLAudioElement = nes_tetris_audio[otherAudioType];
-            // If it's a currently playing high priority audio,
-            // this new audio play attempt will be overriden
-            if (otherAudioType in high_priority_audio && !audioElem.ended && !audioElem.paused) {
-                audio_overriden = true;
-            } else {
-                // Otherwise, fade it out
+            if (!(otherAudioType in high_priority_audio)) {
+                // Fade out the low priority audio
                 fadeOutAudio(audioElem, null);
+            } else {
+                // With USING_ORIGINAL_NES_AUDIO_LIMIT, other audio is muted
+                // While high-priority-audio is playing
+                if (USING_ORIGINAL_NES_AUDIO_LIMIT && !audioElem.ended && !audioElem.paused) {
+                    audio_overriden = true;
+                }
             }
         }
     }
