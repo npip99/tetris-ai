@@ -38,7 +38,16 @@ const nes_tetris_audio_filepaths = {
     [NESTetrisAudioType.LINECLEAR]: "nes_11.mp3",
     [NESTetrisAudioType.GAMEOVER_CRASH]: "nes_14.mp3",
 };
-const nes_tetris_audio = _.mapValues(nes_tetris_audio_filepaths, audio_filepath => new Audio("assets/sounds/" + audio_filepath));
+const high_priority_audio = {
+    [NESTetrisAudioType.TETRIS]: true,
+    [NESTetrisAudioType.LINECLEAR]: true,
+    [NESTetrisAudioType.LEVEL_UP]: true,
+};
+const nes_tetris_audio = _.mapValues(nes_tetris_audio_filepaths, audio_filepath => {
+    let audio_device = new Audio("assets/sounds/" + audio_filepath);
+    audio_device.pause();
+    return audio_device;
+});
 
 const play_audio = (desiredAudioType: NESTetrisAudioType) => {
     if (desiredAudioType == NESTetrisAudioType.NONE) {
@@ -67,7 +76,7 @@ const play_audio = (desiredAudioType: NESTetrisAudioType) => {
         }
 
         // Fade-out is instant if the audio is already done
-        if (audioElem.ended) {
+        if (audioElem.ended || audioElem.paused) {
             audioElem.volume = 0;
         }
 
@@ -87,24 +96,34 @@ const play_audio = (desiredAudioType: NESTetrisAudioType) => {
     };
 
     // Fade out everything else to volume 0, if they're playing
+    let audio_overriden = false;
     for(let otherAudioType in nes_tetris_audio) {
         if (otherAudioType != "" + desiredAudioType) {
             let audioElem: HTMLAudioElement = nes_tetris_audio[otherAudioType];
-            if (audioElem.volume > 0) {
+            // If it's a currently playing high priority audio,
+            // this new audio play attempt will be overriden
+            if (otherAudioType in high_priority_audio && !audioElem.ended && !audioElem.paused) {
+                audio_overriden = true;
+            } else {
+                // Otherwise, fade it out
                 fadeOutAudio(audioElem, null);
             }
         }
     }
 
-    // Play this audio
-    let audio_object = nes_tetris_audio[desiredAudioType];
-    audio_object.loop = false;
-    fadeOutAudio(audio_object, () => {
-        audio_object.pause();
-        audio_object.currentTime = 0;
-        audio_object.volume = 1;
-        audio_object.play();
-    })
+    // Play this audio, if nothing else is overriding the audio
+    if (!audio_overriden) {
+        let audio_object = nes_tetris_audio[desiredAudioType];
+        audio_object.loop = false;
+        fadeOutAudio(audio_object, () => {
+            // Fade out the audio if it's currently playing,
+            // and then play it again when that's done
+            audio_object.pause();
+            audio_object.currentTime = 0;
+            audio_object.volume = 1;
+            audio_object.play();
+        });
+    }
 }
 
 // black = 0
@@ -151,6 +170,7 @@ class TetrisRenderer extends Component {
         flashing_background_image: "assets/images/tetris_background_flashing.png",
         background_image: "assets/images/tetris_background.png",
         numbers: "assets/images/numbers.png",
+        pause: "assets/images/pause_screen.png",
     };
 
     this.images = {};
@@ -211,15 +231,23 @@ class TetrisRenderer extends Component {
   
   // Updates the canvas
   updateCanvas() {
-    // Play audio, if there is any
-    play_audio(this.props.tetris_state.pendingAudio);
-
-    // How much to scale each pixel by
-    const SCALING_FACTOR = 3;
-
     // Use canvasRef to get the canvas
     const canvasObj = this.state.canvasRef.current;
     const ctx = canvasObj.getContext('2d');
+    // How much to scale each pixel by
+    const SCALING_FACTOR = 3;
+
+    // Clear the drawing area
+    ctx.clearRect(0, 0, this.state.canvasWidth, this.state.canvasHeight);
+    ctx.imageSmoothingEnabled = false;
+
+    if (this.props.paused) {
+        ctx.drawImage(this.images.pause, 0, 0, this.images.pause.width * SCALING_FACTOR, this.images.pause.height * SCALING_FACTOR);
+        return;
+    }
+
+    // Play audio, if there is any
+    play_audio(this.props.tetris_state.pendingAudio);
 
     // Render the provided number at the given x/y,
     // with the provided number of digits and colors
@@ -283,10 +311,6 @@ class TetrisRenderer extends Component {
         // Return the new canvas
         return new_canvas;
     };
-  
-    // Clear the drawing area
-    ctx.clearRect(0, 0, this.state.canvasWidth, this.state.canvasHeight);
-    ctx.imageSmoothingEnabled = false;
 
     // Draw the backround image
     if (this.props.tetris_state.gameboardFlashing) {
@@ -319,8 +343,8 @@ class TetrisRenderer extends Component {
 
     // Draw each Tetris Block in the playing area
     let tetris_state: NESTetrisGame = this.props.tetris_state;
-    for(let y = 0; y < 20; y++) {
-      for(let x = 0; x < 10; x++) {
+    for(let y = 0; y < tetris_state.height; y++) {
+      for(let x = 0; x < tetris_state.width; x++) {
         let id = tetris_state.getRenderableBlock(x, y);
         if (id != 0) {
             // Draw an Image for the blocks

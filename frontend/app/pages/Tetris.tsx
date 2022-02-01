@@ -9,10 +9,13 @@ const styles: Record<string, CSSProperties> = {
   main: {
     margin: "0",
     padding: "10pt 20pt",
-    width: "100%",
+    width: "80%",
     height: "100%",
+  },
 
-    boxShadow: "0px 3px 5px 0px #ddd, 10px 3px 5px 0px #ddd, -10px 3px 5px 0px #ddd",
+  levelSelect: {
+    width: "50px",
+    textIndent: "10px",
   },
 };
 
@@ -23,13 +26,33 @@ class Tetris extends Component {
     super(props);
     this.state = {
       tetris_state: new NESTetrisGame(7),
+      paused: false,
     };
 
     this.current_keypresses = {};
 
-    let interval_iterate = setInterval(() => {
+    const NES_FPS = 60.0988;
+
+    let number_of_frames = 0;
+    let start_of_timer = -1;
+
+    const nes_tetris_frame = () => {
+      // Track FPS every 10 seconds
+      if (start_of_timer == -1 || performance.now() - start_of_timer > 10 * 1000.0) {
+        start_of_timer = performance.now();
+        number_of_frames = 0;
+      }
+      let current_fps = number_of_frames / ((performance.now() - start_of_timer) / 1000.0);
+      if (number_of_frames > 10 && current_fps > NES_FPS) {
+        // Hmm our FPS is too high, try again later
+        setTimeout(nes_tetris_frame, 1);
+        return;
+      }
+      number_of_frames++;
+
+      // Use setState to propagate to TetrisRenderer
       this.setState((state, props) => {
-        let tetris_state = this.state.tetris_state;
+        let tetris_state = state.tetris_state;
 
         // Go through all the current keypresses,
         for(let key in this.current_keypresses) {
@@ -56,12 +79,37 @@ class Tetris extends Component {
         }
 
         // Iterate the tetris state
-        tetris_state.iterate();
+        if (!state.paused) {
+          tetris_state.iterate();
+        }
         return {
           tetris_state
         };
       });
-    }, 16.66);
+
+      // Call the next NES Frame when we get a VSYNC
+      window.requestAnimationFrame(nes_tetris_frame);
+    };
+
+    // Call the first NES frame to start
+    window.requestAnimationFrame(nes_tetris_frame);
+  }
+
+  onLoseFocus() {
+    this.setState(() => {
+      return {
+        paused: true,
+      }
+    });
+  }
+
+  onNewLevel(e) {
+    this.setState(() => {
+      return {
+        paused: false,
+        tetris_state: new NESTetrisGame(e.target.value),
+      };
+    });
   }
 
   onKeyDown(e) {
@@ -73,6 +121,14 @@ class Tetris extends Component {
     case 'x':
       e.preventDefault();
       this.current_keypresses[e.key] = true;
+      break;
+    case 'Enter':
+      e.preventDefault();
+      this.setState((state, props) => {
+        return {
+          paused: !state.paused,
+        };
+      });
       break;
     default:
       break;
@@ -100,12 +156,19 @@ class Tetris extends Component {
         <NavBar title="Tetris"/>
         <div style={styles.main}>
           <h1>Tetris Page!</h1>
+          <p>
+            Level:&nbsp;
+            <select name="level" id="level-select" style={styles.levelSelect} onChange={this.onNewLevel.bind(this)}>
+              {Array(20).fill(0).map((val, i) => <option value={i}>{i}</option>)}
+            </select>
+          </p>
           <div
             onKeyDown={this.onKeyDown.bind(this)}
             onKeyUp={this.onKeyUp.bind(this)}
+            onBlur={this.onLoseFocus.bind(this)}
             tabIndex={-1}
           >
-            <TetrisRenderer tetris_state={this.state.tetris_state}/>
+            <TetrisRenderer tetris_state={this.state.tetris_state} paused={this.state.paused}/>
           </div>
         </div>
       </div>
