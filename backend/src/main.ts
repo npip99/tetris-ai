@@ -1,5 +1,8 @@
 import express from  'express';
 import session from 'express-session';
+import { NN } from 'tetris-ai';
+
+let MyNN = new NN();
 
 const PORT = 8081;
 

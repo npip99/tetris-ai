@@ -1,4 +1,6 @@
-export const c = 200
+import { NESTetrisGame } from 'tetris-game';
+import { NN } from './NN';
 
-export const d = 5
-
+export {
+    NN,
+};

@@ -6,24 +6,20 @@
     "target": "es6",
     "moduleResolution": "node",
     "esModuleInterop": true,
-    "lib": ["es6"],
-    "allowJs": true,
+    "lib": ["es6", "dom"],
     "composite": true,
 
     "incremental": true,
     "tsBuildInfoFile": "./build/global-buildinfo-file",
 
     "sourceMap": true,
-    "sourceRoot": "src",
+    "inlineSources": true,
     "declaration": true,
     "declarationMap": true,
 
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
   },
   "include": [
-    "src/**/*"
-  ],
-  "references": [
-    {"path": "../tetris-game"}
+    "src",
   ]
 }

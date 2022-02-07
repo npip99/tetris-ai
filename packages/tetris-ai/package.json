@@ -3,15 +3,11 @@
   "version": "1.0.0",
   "description": "Contains the Tetris AI",
   "author": "",
-
   "main": "build/index.js",
   "typings": "build/index.d.ts",
   "type": "commonjs",
-
   "dependencies": {
+    "@tensorflow/tfjs-node": "^3.13.0",
     "tetris-game": "1.0.0"
-  },
-
-  "devDependencies": {
   }
 }

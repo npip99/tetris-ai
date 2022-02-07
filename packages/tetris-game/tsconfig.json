@@ -7,20 +7,25 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "lib": ["es6"],
-    "allowJs": true,
     "composite": true,
 
     "incremental": true,
     "tsBuildInfoFile": "./build/global-buildinfo-file",
 
     "sourceMap": true,
-    "sourceRoot": "src",
+    "inlineSources": true,
     "declaration": true,
     "declarationMap": true,
 
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
   },
   "include": [
-    "src/**/*"
-  ]
+    "src"
+  ],
+  "exclude": [
+    "build",
+    "node_modules",
+  ],
 }
