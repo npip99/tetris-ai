@@ -1,8 +1,8 @@
 import express from  'express';
 import session from 'express-session';
-import { NN } from 'tetris-ai';
+import { NN, Tester } from 'tetris-ai';
 
-let MyNN = new NN();
+let tester = new Tester();
 
 const PORT = 8081;
 
@@ -36,6 +36,8 @@ app.get('/test', async function(req, res) {
   console.log("TEST HIT!")
 });
 
+/*
 app.listen(PORT, () => {
   console.log("NodeJS Backend running on port " + PORT);
 });
+*/

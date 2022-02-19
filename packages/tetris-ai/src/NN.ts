@@ -1,10 +1,12 @@
 import * as tf from '@tensorflow/tfjs-node';
 
 class NN {
+    model: tf.LayersModel;
+
     constructor(input_width: number, input_height: number, input_channels: number, output_actions: number) {
         // Topology parameters
-        const numFilters = 256;
-        const numBlocks = 20;
+        const numFilters = 64; // 256
+        const numBlocks = 10; // 40
         const numSEChannels = 32;
 
         // HyperParameters
@@ -14,7 +16,7 @@ class NN {
 
         // Input
         const input = tf.input({
-            shape: [input_width, input_height, input_channels],
+            shape: [input_height, input_width, input_channels],
         });
 
         // Parameters of conv blocks used in the main network
@@ -33,7 +35,7 @@ class NN {
         // Create a tower of resblocks
         for(let i = 0; i < numBlocks; i++) {
             // A single resBlock
-            let createResLayer = (inp) => {
+            let createResLayer = (inp: any) => {
                 // Conv layer 1
                 let residualLayer = tf.layers.conv2d(conv3x3_params).apply(inp);
                 residualLayer = tf.layers.batchNormalization().apply(residualLayer);
@@ -56,7 +58,7 @@ class NN {
 
         // Create the value head, ending in tanh,
         // which will estimate the value of the position
-        let createValueHead = (inp) => {
+        let createValueHead = (inp: any) => {
             let valueHead = inp;
             // Value Head Layers
             valueHead = tf.layers.conv2d({
@@ -77,7 +79,7 @@ class NN {
             valueHead = tf.layers.dense({
                 units: 1,
                 useBias: true,
-                activation: 'tanh',
+                activation: 'sigmoid',
                 kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
             }).apply(valueHead);
     
@@ -85,7 +87,7 @@ class NN {
         };
 
         // Create the policy head, which gives the logits for various moves
-        let createPolicyHead = (inp) => {
+        let createPolicyHead = (inp: any) => {
             let policyHead = inp;
             // Policy Head Layers
 
@@ -110,7 +112,6 @@ class NN {
             policyHead = tf.layers.reshape({
                 targetShape: [output_num_actions],
             }).apply(policyHead);
-            policyHead = tf.layers.softmax().apply(policyHead);
             */
 
             // Original AlphaGo policy head
@@ -125,9 +126,9 @@ class NN {
             policyHead = tf.layers.dense({
                 units: output_actions,
                 useBias: true,
+                activation: 'softmax',
                 kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
             }).apply(policyHead);
-            policyHead = tf.layers.softmax().apply(policyHead);
 
             return policyHead;
         };
@@ -142,7 +143,8 @@ class NN {
             outputs: [valueHead as tf.SymbolicTensor, policyHead as tf.SymbolicTensor],
         })
 
-        model.summary();
+        // Post a summary of the model
+        // model.summary();
 
         // And compile the network with our loss function
         model.compile({
@@ -151,7 +153,7 @@ class NN {
             metrics: ['mse', 'categoricalCrossentropy'],
         });
 
-        return model;
+        this.model = model;
     }
 };
 
