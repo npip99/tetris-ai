@@ -1,10 +1,13 @@
 import { AbstractGame, GameState } from './AbstractGame';
 import * as tf from '@tensorflow/tfjs-node';
-import * as PImage from 'pureimage';
+import { createCanvas } from 'canvas';
 import * as fs from 'fs';
+import { node } from '@tensorflow/tfjs-node';
 
 interface MCTSArgs {
+    // 50 for Atari, 800 for Go/Chess/Shogi
     numMCTSSims: number,
+    // 0.95-1.0, decay factor
     gamma: number,
 };
 
@@ -20,7 +23,9 @@ class Node {
     isFinalState: Boolean;
     // N = Number of visits through and including the node
     numVisits: number;
-    // Q = Sum_i (N_i / N) * Q_i
+    // The original NN value
+    originalValue: number;
+    // Q = originalValue / N + Sum_i (N_i / N) * Q_i
     avgValue: number;
     // Children Data [Only set when numVisits > 0, and !isFinalState]
     validActions: Boolean[];
@@ -66,7 +71,7 @@ class MCTS {
         this.trainingData = [];
     }
 
-    simulate(cPuct: number) {
+    simulate(cPuctInit: number, cPuctBase: number) {
         // Simulate a MCTS path
         let currentNode = this.rootNode;
 
@@ -99,10 +104,12 @@ class MCTS {
             for(let i = 0; i < this.game.getNumActions(); i++) {
                 if (currentNode.validActions[i]) {
                     let childChanceNode = currentNode.children[i];
+                    // cPuct, from Init and Base
+                    let cPuct = cPuctInit + Math.log( 1.0 + currentNode.numVisits / cPuctBase );
                     // Q(s, a)
                     let avgDiscountedReward = childChanceNode.avgValue;
                     // U(s, a)
-                    let uFactor = cPuct * currentNode.priorPolicy[i] * Math.sqrt(currentNode.numVisits / (1 + childChanceNode.numVisits));
+                    let uFactor = cPuct * currentNode.priorPolicy[i] * Math.sqrt(currentNode.numVisits) / (childChanceNode.numVisits + 1);
                     // PUCTvalue = Q(s, a) + U(s, a)
                     let PUCT = avgDiscountedReward + uFactor;
                     // Select the action with the highest PUCT
@@ -119,8 +126,9 @@ class MCTS {
             // Sample from the chance node
             let nextChanceChoice = 0;
             for(let i = 0; i < nextChanceNode.numPossibilities; i++) {
+                let childNode = nextChanceNode.childNodes[i];
                 // If this node hasn't been visited it's proportioned number of times, choose it
-                if (nextChanceNode.childNodes[i].numVisits <= nextChanceNode.numVisits * nextChanceNode.probabilities[i]) {
+                if (childNode.numVisits <= nextChanceNode.numVisits * nextChanceNode.probabilities[i]) {
                     nextChanceChoice = i;
                     break;
                 }
@@ -139,11 +147,11 @@ class MCTS {
         let expectedValue: number;
 
         if (currentNode.isFinalState) {
-            expectedValue = 0.0;
+            expectedValue = -5.0;
         } else {
             // Query the Neural Network
-            let NNValue;
-            let NNPriors;
+            let NNValue: number;
+            let NNPriors: number[];
 
             const USING_NN = false;
             if (USING_NN) {
@@ -155,7 +163,7 @@ class MCTS {
                 NNValue = resultTensor[0].arraySync()[0][0];
                 NNPriors = resultTensor[1].arraySync()[0];
             } else {
-                NNValue = 0.5;
+                NNValue = 1.0;
                 NNPriors = new Array(this.game.getNumActions());
                 for(let i = 0; i < this.game.getNumActions(); i++) {
                     NNPriors[i] = 1.0 / this.game.getNumActions();
@@ -205,7 +213,9 @@ class MCTS {
                         let nextGameState = nextStates[j].gameState;
 
                         // Get a rough estimated of the EV of the unexplored Node
-                        let childNodeEV = NNValue * 0.5;
+                        // expectedValue = Sum_j probabilities[j] * (immediateRewards[j] + gamma * childNodeEV)
+                        // childNodeEV = (expectedValue - immediateRewards[j]) / gamma
+                        let childNodeEV = 0.5;
                         let childNodeGameOver = this.game.getGameEnded(nextGameState);
                         if (childNodeGameOver) {
                             childNodeEV = 0.0;
@@ -228,6 +238,7 @@ class MCTS {
 
         // Mark as visited
         currentNode.numVisits++;
+        currentNode.originalValue = expectedValue;
         currentNode.avgValue = expectedValue;
 
         // ================
@@ -255,9 +266,9 @@ class MCTS {
             prevChanceNode.avgValue = newChandeNodeQ;
             prevChanceNode.numVisits++;
             
-            // Node's Q = Sum (N_i / N) * Q_i, over all child ChanceNodes
-            let newNodeQ = 0.0;
+            // Node's Q = OriginalValue / N + Sum (N_i / N) * Q_i, over all child ChanceNodes
             let newNodeN = prevNode.numVisits + 1;
+            let newNodeQ = prevNode.originalValue / newNodeN;
             for(let i = 0; i < this.game.getNumActions(); i++) {
                 if (prevNode.validActions[i]) {
                     newNodeQ += (prevNode.children[i].numVisits / newNodeN) * prevNode.children[i].avgValue;
@@ -274,18 +285,13 @@ class MCTS {
     }
 
     iterate() {
-        const cPuct = 1.25; // Training
-        const Temperature = 0.0; // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-        // const cPuct = 2.4; // MatchPlay
-        // const Temperature = 0.0; // MatchPlay
-        const numSimulations = 200; // 50 for Atari, 800 for Go/Chess/Shogi
+        const cPuctInit = 1.25; // Training
+        const cPuctBase = 18000;
+        // const cPuctInit = 2.4; // MatchPlay
 
         if (this.rootNode.isFinalState) {
             throw new Error("Tried to iterate a completed MCTS!");
         }
-
-        console.log(this.rootNode.gameState.toString());
-        console.log("Score: %d", this.game.getTotalScore(this.rootNode.gameState));
 
         // ==============
         // Adjust PriorPolicy of the Root Node
@@ -294,7 +300,7 @@ class MCTS {
         // Make sure the rootNode has been visited at least once,
         // So that its childrens' data is initialized
         if (this.rootNode.numVisits == 0) {
-            this.simulate(cPuct);
+            this.simulate(cPuctInit, cPuctBase);
         }
 
         // Adjust the prior probabilities of the rootnode, using Dirichlet Noise
@@ -310,9 +316,14 @@ class MCTS {
         // ==============
 
         // Run many simulations, as part of MCTS evaluation of the root node
-        for(let i = 0; i < numSimulations; i++) {
-            this.simulate(cPuct);
+        while(this.rootNode.numVisits < this.args.numMCTSSims) {
+            this.simulate(cPuctInit, cPuctBase);
         }
+    }
+    
+    sampleMove() {
+        const Temperature = 0.0; // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
+        // const Temperature = 0.0; // MatchPlay
 
         // ==============
         // Save the result for future training of the NN
@@ -386,25 +397,6 @@ class MCTS {
             }
         }
 
-        let str = " => ";
-        let priorLen = str.length;
-        let first = true;
-        for(let j = 0; j < this.game.getNumActions(); j++) {
-            if (this.rootNode.validActions[j]) {
-                let childValue = this.rootNode.children[j].avgValue;
-                if (first) {
-                    first = false;
-                } else {
-                    for(let k = 0; k < priorLen; k++) {
-                        str += " ";
-                    }
-                }
-                str += "[" + j + " | " + childValue + "]" + (j == chosenAction ? "*" : "") + "\n";
-            }
-        }
-        console.log(str);
-        this.drawTree();
-
         // Select that action to be the new root node
         let chosenChanceNode = this.rootNode.children[chosenAction];
         // Sample from possibilities to get back to a deterministic Node
@@ -418,131 +410,175 @@ class MCTS {
                 break;
             }
         }
-        this.rootNode = chosenChanceNode.childNodes[chosenSample];
-        //this.decisionPath.push(this.rootNode);
 
-        if (this.rootNode.isFinalState) {
-            console.log("\nGame Over!");
-            console.log(this.rootNode.gameState.toString());
-            console.log("Final Score: %d", this.game.getTotalScore(this.rootNode.gameState));
+        // If true, chose the unlucky branch if one branch can kill you
+        const punishQuickly = true;
+        if (punishQuickly) {
+            for(let i = 0; i < chosenChanceNode.numPossibilities; i++) {
+                if (chosenChanceNode.childNodes[i].isFinalState) {
+                    chosenSample = i;
+                    break;
+                }
+            }
         }
+
+        // Set the rootNode to this new Node
+        this.rootNode = chosenChanceNode.childNodes[chosenSample];
     }
 
-    drawTree() {
-        // Generate Layers
-        let currentNodes = [this.rootNode];
-        let layers: Node[][] = [];
-        let chanceLayers: ChanceNode[][] = [];
-        let widestLayer = 0;
-        while(currentNodes.length > 0) {
-            layers.push(currentNodes);
-            widestLayer = Math.max(widestLayer, currentNodes.length);
-            // Generate ChanceNodes from current Nodes
-            let chanceNodes: ChanceNode[] = [];
-            for(let i = 0; i < currentNodes.length; i++) {
-                // Get the node
-                let node = currentNodes[i];
-                if (!node.isFinalState && node.numVisits > 0) {
-                    // Get the chance nodes from it
-                    for(let j = 0; j < this.game.getNumActions(); j++) {
-                        if (node.validActions[j]) {
-                            chanceNodes.push(node.children[j]);
-                        }
-                    }
-                }
-            }
-            chanceLayers.push(chanceNodes);
-            widestLayer = Math.max(widestLayer, chanceNodes.length);
-
-            // Get num next nodes (So edges can be drawn with position)
-            let numNextNodes = 0;
-            for(let i = 0; i < chanceNodes.length; i++) {
-                numNextNodes += chanceNodes[i].numPossibilities;
-            }
-
-            // Generate next Nodes from ChanceNodes
-            let nextNodes: Node[] = [];
-            for(let i = 0; i < chanceNodes.length; i++) {
-                let chanceNode = chanceNodes[i];
-                for(let j = 0; j < chanceNode.numPossibilities; j++) {
-                    let node = chanceNode.childNodes[j];
-                    nextNodes.push(node);
-                }
-            }
-
-            // Start the next layer with the bottom of the previous layer
-            currentNodes = nextNodes;
-        }
-
+    drawTree(rootNode: Node) {
         // Image
-        const image = PImage.make(100 * widestLayer, 100 * layers.length, {});
-        const ctx = image.getContext('2d');
+        const NODE_WIDTH = 75;
+        const NODE_PADDING = 10;
+        // The first drawing will be small, then we later draw on the larger canvas
+        let image = createCanvas(1, 1);
+        let ctx = image.getContext('2d');
+        // Track the max column/row of what we've drawn
+        let maxRow = 0;
 
         // Statistics
         let numExploredNodesDrawn = 0;
         let numNodesDrawn = 0;
         let numChanceNodesDrawn = 0;
 
-        let drawNode = (node: Node) => {
+        let drawNode = (node: Node, column: number, row: number) => {
+            let x = column * NODE_WIDTH;
+            let y = row * NODE_WIDTH;
+
             numNodesDrawn++;
             if (node.numVisits > 0) {
                 numExploredNodesDrawn++;
             }
-            ctx.fillStyle = 'red';
-            ctx.fillRect(10, 10, 20, 20);
-        }
-
-        let drawChanceNode = (chanceNode: ChanceNode) => {
-            numChanceNodesDrawn++;
-            ctx.fillStyle = 'blue';
-            ctx.fillRect(10, 10, 20, 20);
-        }
-
-        console.log("%d Layers tall, %d nodes wide", layers.length, widestLayer);
-        for(let layer = 0; layer < layers.length; layer++) {
-            console.log("Layer: %d (NumNodes: (%d/%d) / NumChanceNodes: %d)", layers.length, numExploredNodesDrawn, numNodesDrawn, numChanceNodesDrawn);
-            let nodes = layers[layer];
-            let chanceNodes = chanceLayers[layer];
-            for(let i = 0; i < nodes.length; i++) {
-
+            // Draw Circle
+            ctx.strokeStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(x + NODE_WIDTH / 2, y + NODE_WIDTH / 2, NODE_WIDTH / 2 - NODE_PADDING, 0, 2 * Math.PI);
+            ctx.stroke();
+            // Prepare Text
+            let height = Math.floor(NODE_WIDTH / 6);
+            ctx.font = height + "px sans-serif";
+            // Draw N
+            let text = 'N = ' + node.numVisits;
+            let textMetrics = ctx.measureText(text);
+            ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 - height / 2);
+            // Draw Q
+            text = 'Q = ' + node.avgValue.toPrecision(2);
+            if (node.isFinalState) {
+                text += "~";
             }
+            textMetrics = ctx.measureText(text);
+            ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 + height / 2);
         }
+
+        let drawChanceNode = (chanceNode: ChanceNode, column: number, row: number) => {
+            let x = column * NODE_WIDTH;
+            let y = row * NODE_WIDTH;
+
+            numChanceNodesDrawn++;
+            // Draw Circle
+            ctx.strokeStyle = 'blue';
+            ctx.beginPath();
+            ctx.arc(x + NODE_WIDTH / 2, y + NODE_WIDTH / 2, NODE_WIDTH / 2 - NODE_PADDING, 0, 2 * Math.PI);
+            ctx.stroke();
+            // Prepare Text
+            let height = Math.floor(NODE_WIDTH / 6);
+            ctx.font = height + "px sans-serif";
+            // Draw N
+            let text = 'N = ' + chanceNode.numVisits;
+            let textMetrics = ctx.measureText(text);
+            ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 - height / 2);
+            // Draw Q
+            text = 'Q = ' + chanceNode.avgValue.toPrecision(2);
+            textMetrics = ctx.measureText(text);
+            ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 + height / 2);
+        }
+
+        let drawPath = (c1: number, r1: number, c2: number, r2: number, text: string) => {
+            let x1 = c1 * NODE_WIDTH + NODE_WIDTH / 2;
+            let y1 = r1 * NODE_WIDTH + NODE_WIDTH - NODE_PADDING;
+            let x2 = c2 * NODE_WIDTH + NODE_WIDTH / 2;
+            let y2 = r2 * NODE_WIDTH + NODE_PADDING;
+
+            ctx.strokeStyle = 'grey';
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            // Prepare Text
+            let height = Math.floor(NODE_WIDTH / 6);
+            ctx.font = height + "px sans-serif";
+            // Draw Text
+            ctx.strokeStyle = 'black';
+            let textMetrics = ctx.measureText(text);
+            let numLines = (text.match(/\n/g) || []).length + 1;
+            ctx.fillText(text, (x1 + x2) / 2 + 5, (y1 + y2) / 2 - height * numLines / 2 + height);
+        };
+
+        // Returns the largest width of its children layers
+        let dfs = (node: Node, column: number, row: number): number => {
+            drawNode(node, column, row);
+            if (node.isFinalState || node.numVisits == 0) {
+                // Track maxrow of leaves
+                maxRow = Math.max(maxRow, row);
+                return 1;
+            }
+            let totalWidth = 0;
+            for(let i = 0; i < this.game.getNumActions(); i++) {
+                if (node.validActions[i]) {
+                    let chanceNode = node.children[i];
+                    let chanceNodeColumn = column + totalWidth;
+                    let msg = "a=" + i + "\n";
+                    msg += "pr=" + node.priorPolicy[i].toPrecision(2);
+                    drawPath(column, row, chanceNodeColumn, row + 1, msg);
+                    drawChanceNode(chanceNode, chanceNodeColumn, row + 1);
+                    for(let j = 0; j < chanceNode.numPossibilities; j++) {
+                        let childNode = chanceNode.childNodes[j];
+                        let msg =  "p=" + chanceNode.probabilities[j].toPrecision(2) + "\n";
+                        msg += "r=" + chanceNode.immediateRewards[j].toPrecision(2);
+                        drawPath(chanceNodeColumn, row + 1, column + totalWidth, row + 2, msg);
+                        let childWidth = dfs(childNode, column + totalWidth, row + 2);
+                        totalWidth += childWidth;
+                    }
+                }
+            }
+            // Either the single node, or the total width of its children
+            return Math.max(1, totalWidth);
+        }
+
+        // Draw once, to get width/maxRow
+        let width = dfs(rootNode, 0, 0);
+        // Draw again on the larger canvas
+        image = createCanvas(width * NODE_WIDTH, (maxRow + 1) * NODE_WIDTH, 'svg');
+        ctx = image.getContext('2d');
+        dfs(rootNode, 0, 0);
 
         // Write the image to a png file
-        PImage.encodePNGToStream(image, fs.createWriteStream('out.png')).then(() => {
-            console.log("wrote out the png file to out.png");
-        }).catch((e)=>{
-            console.log("there was an error writing");
-        });
+        fs.writeFileSync('out.svg', image.toBuffer());
     }
 
     print() {
-        return;
-        for(let i = 0; i < this.decisionPath.length; i++) {
-            let chosenNode = this.decisionPath[i];
-            console.log(chosenNode.gameState.toString());
-            if (chosenNode.isFinalState) {
-                console.log("Terminal State ~ Total Score: %d", this.game.getTotalScore(chosenNode.gameState));
-            } else {
-                let str = "";
-                str += i + " => ";
-                let priorLen = str.length;
-                let first = true;
-                for(let j = 0; j < this.game.getNumActions(); j++) {
-                    if (chosenNode.validActions[j]) {
-                        let childValue = chosenNode.children[j].avgValue;
-                        if (first) {
-                            first = false;
-                        } else {
-                            for(let k = 0; k < priorLen; k++) {
-                                str += " ";
-                            }
+        console.log(this.rootNode.gameState.toString());
+        if (this.rootNode.isFinalState) {
+            console.log("Terminal State ~ Total Score: %d", this.game.getTotalScore(this.rootNode.gameState));
+        } else {
+            let str = "";
+            str += " => ";
+            let priorLen = str.length;
+            let first = true;
+            for(let j = 0; j < this.game.getNumActions(); j++) {
+                if (this.rootNode.validActions[j]) {
+                    let childValue = this.rootNode.children[j].avgValue;
+                    if (first) {
+                        first = false;
+                    } else {
+                        for(let k = 0; k < priorLen; k++) {
+                            str += " ";
                         }
-                        str += "[" + j + " | " + childValue + "]\n";
                     }
+                    str += "[" + j + " | " + childValue + "]\n";
                 }
-                console.log(str);
             }
+            console.log(str);
         }
     }
 };
