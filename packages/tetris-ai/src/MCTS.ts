@@ -1,8 +1,7 @@
 import { AbstractGame, GameState } from './AbstractGame';
-import * as tf from '@tensorflow/tfjs-node';
+import * as tf from '@tensorflow/tfjs-node-gpu';
 import { createCanvas } from 'canvas';
 import * as fs from 'fs';
-import { node } from '@tensorflow/tfjs-node';
 
 interface MCTSArgs {
     // 50 for Atari, 800 for Go/Chess/Shogi
