@@ -1,3 +1,8 @@
+#!/bin/bash
+
+set -e
+trap 'echo "Error at $BASH_SOURCE on line $LINENO!"' ERR
+
 # Install nvm/nodejs if it hasn' been done already
 if ! command -v nvm &>/dev/null; then
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
@@ -13,6 +18,9 @@ fi
 
 # Install dependencies with npm
 npm i
+
+# For now, don't do the below
+exit
 
 # Install apache2
 sudo apt-get install apache2 -y

@@ -11,6 +11,7 @@
   "type": "commonjs",
   "dependencies": {
     "@tensorflow/tfjs-node": "^3.13.0",
+    "@tensorflow/tfjs-node-gpu": "^3.13.0",
     "canvas": "^2.9.0",
     "prompt-sync": "^4.2.0",
     "pureimage": "^0.3.8",
