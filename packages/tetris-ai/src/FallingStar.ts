@@ -22,6 +22,7 @@ class FallingStarState extends GameState {
     playerLocation: number;
     frame: number;
     currentlyTeleporting: Boolean;
+    totalNumRewards: number;
     totalScore: number;
     // y coordinate of what enemy lazered the player
     lazeredFrom: number;
@@ -29,7 +30,7 @@ class FallingStarState extends GameState {
 
     toTensor(): tf.Tensor3D {
         const createLayer = (lambda: (x: number, y: number) => number) => {
-            let layer = [];
+            let layer: number[][] = [];
             for(let y = 0; y < BOARD_HEIGHT; y++) {
                 layer.push([]);
                 for(let x = 0; x < BOARD_WIDTH; x++) {
@@ -93,7 +94,7 @@ class FallingStarState extends GameState {
 };
 
 class FallingStarTransition extends GameTransition {
-    immediateReward: number;
+    immediateReward: number | null;
     probability: number;
     gameState: FallingStarState;
 }
@@ -121,6 +122,7 @@ class FallingStarAbstractGame extends AbstractGame {
         ret.playerLocation = Math.floor(BOARD_WIDTH / 2);
         ret.frame = 0;
         ret.currentlyTeleporting = false;
+        ret.totalNumRewards = 0;
         ret.totalScore = 0;
         ret.lazeredFrom = -1;
         ret.gameOver = false;
@@ -139,6 +141,7 @@ class FallingStarAbstractGame extends AbstractGame {
         ret.playerLocation = state.playerLocation;
         ret.frame = state.frame;
         ret.currentlyTeleporting = state.currentlyTeleporting;
+        ret.totalNumRewards = state.totalNumRewards;
         ret.totalScore = state.totalScore;
         ret.lazeredFrom = state.lazeredFrom;
         ret.gameOver = state.gameOver;
@@ -205,9 +208,16 @@ class FallingStarAbstractGame extends AbstractGame {
         }
 
         // Check if a score was made, by intersecting a star
-        let immediateReward = 0;
+        let immediateReward: number | null = null;
+        // Mark immediate reward, if it was possible to receive one
+        for(let i = 0; i < BOARD_WIDTH; i++) {
+            if (newState.board[BOARD_HEIGHT - 1][i] == FallingStarItemType.STAR) {
+                immediateReward = 0.0;
+            }
+        }
+        // Mark as 1.0, if the reward was received
         if (newState.board[BOARD_HEIGHT - 1][newState.playerLocation] == FallingStarItemType.STAR) {
-            immediateReward = 0.1;
+            immediateReward = 1.0;
         }
 
         // Check if the game is over, by intersecting an enemy
@@ -216,7 +226,15 @@ class FallingStarAbstractGame extends AbstractGame {
             newState.gameOver = true;
         }
 
-        newState.totalScore += immediateReward;
+        if (immediateReward != null) {
+            // newTotalScore = (prevTotalScore * prevNum + reward) / (prevNum + 1)
+            // newTotalScore = prevTotalScore * ((prevNum + 1) - 1) / (prevNum + 1) + reward / (prevNum + 1)
+            // newTotalScore = prevTotalScore * (1 - 1 / (prevNum + 1)) + reward / (prevNum + 1)
+            // newTotalScore = prevTotalScore - prevTotalScore / (prevNum + 1) + reward / (prevNum + 1)
+            // newTotalScore = prevTotalScore + (reward - prevTotalScore) / (prevNum + 1)
+            newState.totalScore += (immediateReward - newState.totalScore) / (newState.totalNumRewards + 1);
+            newState.totalNumRewards++;
+        }
         let possibleTransitions: FallingStarTransition[] = [];
         
         // Try spawning a new Star

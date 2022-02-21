@@ -17,18 +17,17 @@ class Tester {
         let fallingStarNN = new NN(shape[2], shape[1], shape[0], fallingStarGame.getNumActions());
 
         let fallingStarMCTS = new MCTS(fallingStarGame, fallingStarInitState, fallingStarNN.model, {
-            numMCTSSims: 10000,
-            gamma: 0.97,
+            numMCTSSims: 2000,
+            gamma: 0.99,
         });
 
         while(!fallingStarMCTS.isGameOver()) {
-            fallingStarMCTS.iterate();
             let rootNode = fallingStarMCTS.rootNode;
-            console.log((rootNode.gameState as any).frame);
+            fallingStarMCTS.iterate();
             fallingStarMCTS.print();
             fallingStarMCTS.sampleMove();
             if (fallingStarMCTS.isGameOver()) {
-                //fallingStarMCTS.drawTree(rootNode);
+                fallingStarMCTS.drawTree(rootNode);
             }
         }
         fallingStarMCTS.print();

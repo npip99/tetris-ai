@@ -50,7 +50,7 @@ class ChanceNode {
     numPossibilities: number;
     // Probability and Node of each possibility
     probabilities: number[];
-    immediateRewards: number[];
+    immediateRewards: (number | null)[];
     childNodes: Node[];
 }
 
@@ -123,12 +123,37 @@ class MCTS {
             // Go down the path from that action, and track all the nodes/edges we've taken
             let nextChanceNode = currentNode.children[bestAction];
 
+            // Get the probabilitiy of a Non-Final-State childnodes
+            let cumulativeNonFinalProb = 0.0;
+            for(let i = 0; i < nextChanceNode.numPossibilities; i++) {
+                if (!nextChanceNode.childNodes[i].isFinalState) {
+                    cumulativeNonFinalProb += nextChanceNode.probabilities[i];
+                }
+            }
+
             // Sample from the chance node
             let nextChanceChoice = 0;
             for(let i = 0; i < nextChanceNode.numPossibilities; i++) {
                 let childNode = nextChanceNode.childNodes[i];
+                // The number of expected visits this node should have,
+                // After we finish visiting nextChanceNode
+                let expectedVisits: number;
+                if (cumulativeNonFinalProb > 0.0) {
+                    // Final states are final, we don't need to visit them
+                    if (childNode.isFinalState) {
+                        expectedVisits = 0;
+                    } else {
+                        // Weight visits by the probability among non-final-nodes
+                        // TODO?: Maybe make this be based on the expected variance of the child
+                        // (Situations with low variance don't need to be explored as much)
+                        expectedVisits = (nextChanceNode.numVisits + 1.0) * (nextChanceNode.probabilities[i] / cumulativeNonFinalProb);
+                    }
+                } else {
+                    // If all states are final, it's fine pick one
+                    expectedVisits = (nextChanceNode.numVisits + 1.0) * nextChanceNode.probabilities[i];
+                }
                 // If this node hasn't been visited it's proportioned number of times, choose it
-                if (childNode.numVisits <= nextChanceNode.numVisits * nextChanceNode.probabilities[i]) {
+                if (childNode.numVisits < expectedVisits) {
                     nextChanceChoice = i;
                     break;
                 }
@@ -147,7 +172,7 @@ class MCTS {
         let expectedValue: number;
 
         if (currentNode.isFinalState) {
-            expectedValue = -5.0;
+            expectedValue = 0.0;
         } else {
             // Query the Neural Network
             let NNValue: number;
@@ -215,7 +240,7 @@ class MCTS {
                         // Get a rough estimated of the EV of the unexplored Node
                         // expectedValue = Sum_j probabilities[j] * (immediateRewards[j] + gamma * childNodeEV)
                         // childNodeEV = (expectedValue - immediateRewards[j]) / gamma
-                        let childNodeEV = 0.5;
+                        let childNodeEV = expectedValue;
                         let childNodeGameOver = this.game.getGameEnded(nextGameState);
                         if (childNodeGameOver) {
                             childNodeEV = 0.0;
@@ -224,9 +249,14 @@ class MCTS {
                         // Create the new child
                         childChanceNode.childNodes[j] = new Node(nextGameState, childNodeEV, childNodeGameOver);
 
-                        // Update avgValue of the chanceNode
-                        let expectedValue = childChanceNode.immediateRewards[j] + this.args.gamma * childChanceNode.childNodes[j].avgValue;
-                        childChanceNode.avgValue += childChanceNode.probabilities[j] * expectedValue;
+                        // Update avgValue of the chanceNode, based off the child node
+                        let childNodeEV_POVChanceNode: number;
+                        if (childChanceNode.immediateRewards[j] != null) {
+                            childNodeEV_POVChanceNode = (1.0 - this.args.gamma) * childChanceNode.immediateRewards[j]! + this.args.gamma * childChanceNode.childNodes[j].avgValue;
+                        } else {
+                            childNodeEV_POVChanceNode = childChanceNode.childNodes[j].avgValue;
+                        }
+                        childChanceNode.avgValue += childChanceNode.probabilities[j] * childNodeEV_POVChanceNode;
                     }
 
                     // Populate child data on currentNode
@@ -259,7 +289,12 @@ class MCTS {
             let newChandeNodeQ = 0.0;
             for(let i = 0; i < prevChanceNode.numPossibilities; i++) {
                 // EV of that Child
-                let expectedValue = prevChanceNode.immediateRewards[i] + this.args.gamma * prevChanceNode.childNodes[i].avgValue;
+                let expectedValue: number;
+                if (prevChanceNode.immediateRewards[i] != null) {
+                    expectedValue = (1.0 - this.args.gamma) * prevChanceNode.immediateRewards[i]! + this.args.gamma * prevChanceNode.childNodes[i].avgValue;
+                } else {
+                    expectedValue = prevChanceNode.childNodes[i].avgValue;
+                }
                 newChandeNodeQ += prevChanceNode.probabilities[i] * expectedValue;
             }
             // Update that ChanceNode
@@ -276,7 +311,7 @@ class MCTS {
             }
             // Update that previous Node
             prevNode.avgValue = newNodeQ;
-            prevNode.numVisits++;
+            prevNode.numVisits = newNodeN;
         }
     }
 
@@ -412,7 +447,7 @@ class MCTS {
         }
 
         // If true, chose the unlucky branch if one branch can kill you
-        const punishQuickly = true;
+        const punishQuickly = false;
         if (punishQuickly) {
             for(let i = 0; i < chosenChanceNode.numPossibilities; i++) {
                 if (chosenChanceNode.childNodes[i].isFinalState) {
@@ -517,7 +552,7 @@ class MCTS {
         // Returns the largest width of its children layers
         let dfs = (node: Node, column: number, row: number): number => {
             drawNode(node, column, row);
-            if (node.isFinalState || node.numVisits == 0) {
+            if (node.isFinalState || node.numVisits == 0 || row > 14) {
                 // Track maxrow of leaves
                 maxRow = Math.max(maxRow, row);
                 return 1;
@@ -534,7 +569,7 @@ class MCTS {
                     for(let j = 0; j < chanceNode.numPossibilities; j++) {
                         let childNode = chanceNode.childNodes[j];
                         let msg =  "p=" + chanceNode.probabilities[j].toPrecision(2) + "\n";
-                        msg += "r=" + chanceNode.immediateRewards[j].toPrecision(2);
+                        msg += "r=" + (chanceNode.immediateRewards[j] == null ? "none" : chanceNode.immediateRewards[j]!.toPrecision(2));
                         drawPath(chanceNodeColumn, row + 1, column + totalWidth, row + 2, msg);
                         let childWidth = dfs(childNode, column + totalWidth, row + 2);
                         totalWidth += childWidth;

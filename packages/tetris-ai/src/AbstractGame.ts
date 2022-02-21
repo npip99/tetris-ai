@@ -11,42 +11,42 @@ class GameState {
 };
 
 class GameTransition {
-    immediateReward: number;
+    immediateReward: number | null;
     probability: number;
     gameState: GameState;
 }
 
 class AbstractGame {
     getInitialState(): GameState {
-        return null;
+        throw new Error("Unimplemented!");
     }
 
     duplicateState(state: GameState): GameState {
-        return null;
+        throw new Error("Unimplemented!");
     }
 
     getGameEnded(state: GameState): Boolean {
-        return false;
+        throw new Error("Unimplemented!");
     }
 
     getTotalScore(state: GameState): number {
-        return 0;
+        throw new Error("Unimplemented!");
     }
 
     // Get the number of possible actions
     getNumActions(): number {
-        return 0;   
+        throw new Error("Unimplemented!");
     }
 
     // Returns a 1-hot encoding of valid moves
     getValidActions(state: GameState): Boolean[] {
-        return [];
+        throw new Error("Unimplemented!");
     }
 
     // Progresses the game state, returning all possible
     // GameTransitions, and their normalized probabilities of occuring
     getNextStates(state: GameState, actionNumber: number): GameTransition[] {
-        return [];
+        throw new Error("Unimplemented!");
     }
 };
 
