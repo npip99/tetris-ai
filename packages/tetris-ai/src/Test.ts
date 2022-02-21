@@ -16,7 +16,7 @@ class Tester {
         let fallingStarNN = new NN(shape[2], shape[1], shape[0], fallingStarGame.getNumActions());
 
         let fallingStarMCTS = new MCTS(fallingStarGame, fallingStarInitState, fallingStarNN.model, {
-            numMCTSSims: 2000,
+            numMCTSSims: 600,
             gamma: 0.99,
         });
 

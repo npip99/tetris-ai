@@ -178,7 +178,7 @@ class MCTS {
             let NNValue: number;
             let NNPriors: number[];
 
-            const USING_NN = false;
+            const USING_NN = true;
             if (USING_NN) {
                 let inputTensor: tf.Tensor3D = currentNode.gameState.toTensor().transpose([1, 2, 0]);
                 let batchedInputTensor: tf.Tensor4D = tf.tensor4d([
