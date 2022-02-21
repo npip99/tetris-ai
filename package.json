@@ -12,7 +12,8 @@
     "serve-frontend": "cd frontend && npm run serve",
     "serve-packages": "cd packages && tsc --build tsconfig.json --pretty --watch --preserveWatchOutput",
     "serve": "concurrently --kill-others \"npm:serve-*\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test-ai": "npm run build-packages && npm run test --workspace=tetris-ai"
   },
   "dependencies": {
     "concurrently": "^7.0.0"

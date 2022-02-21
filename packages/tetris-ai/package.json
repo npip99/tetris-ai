@@ -4,6 +4,9 @@
   "description": "Contains the Tetris AI",
   "author": "",
   "main": "build/index.js",
+  "scripts": {
+    "test": "node build/Test.js"
+  },
   "typings": "build/index.d.ts",
   "type": "commonjs",
   "dependencies": {
