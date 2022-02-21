@@ -1,6 +1,6 @@
 import { MCTS } from "./MCTS";
 import { NN } from "./NN";
-import { FallingStarAbstractGame, FallingStarState } from "./FallingStar";
+import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
 import promptSync from 'prompt-sync';
 import * as tf from '@tensorflow/tfjs-node';
 
