@@ -8,6 +8,8 @@ interface MCTSArgs {
     numMCTSSims: number,
     // 0.95-1.0, decay factor
     gamma: number,
+    // 0.0-infinity, temperature
+    temperature: number,
 };
 
 interface TrainingData {
@@ -53,24 +55,26 @@ class ChanceNode {
     childNodes: Node[];
 }
 
+type getNNResultLambda = (_: tf.Tensor3D) => Promise<number[][]>;
+
 class MCTS {
     game: AbstractGame;
     rootNode: Node;
     decisionPath: Node[];
-    nnet: tf.LayersModel;
+    getNNetResult: getNNResultLambda;
     args: MCTSArgs;
     trainingData: TrainingData[];
 
-    constructor(game: AbstractGame, rootGameState: GameState, nnet: tf.LayersModel, args: MCTSArgs) {
+    constructor(game: AbstractGame, rootGameState: GameState, getNNetResult: getNNResultLambda, args: MCTSArgs) {
         this.game = game;
         this.rootNode = new Node(rootGameState, 0.0, this.game.getGameEnded(rootGameState));
         //this.decisionPath = [this.rootNode];
-        this.nnet = nnet;
+        this.getNNetResult = getNNetResult;
         this.args = args;
         this.trainingData = [];
     }
 
-    simulate(cPuctInit: number, cPuctBase: number) {
+    async simulate(cPuctInit: number, cPuctBase: number) {
         // Simulate a MCTS path
         let currentNode = this.rootNode;
 
@@ -174,26 +178,12 @@ class MCTS {
             expectedValue = 0.0;
         } else {
             // Query the Neural Network
-            let NNValue: number;
-            let NNPriors: number[];
+            let inputTensor: tf.Tensor3D = currentNode.gameState.toTensor().transpose([1, 2, 0]);
+            let outputResult = await this.getNNetResult(inputTensor);
+            let NNValue = outputResult[0][0];
+            let NNPriors = outputResult[1];
 
-            const USING_NN = true;
-            if (USING_NN) {
-                let inputTensor: tf.Tensor3D = currentNode.gameState.toTensor().transpose([1, 2, 0]);
-                let batchedInputTensor: tf.Tensor4D = tf.tensor4d([
-                    inputTensor.arraySync()
-                ]);
-                let resultTensor: tf.Tensor2D[] = this.nnet.predict(batchedInputTensor) as tf.Tensor2D[];
-                NNValue = resultTensor[0].arraySync()[0][0];
-                NNPriors = resultTensor[1].arraySync()[0];
-            } else {
-                NNValue = 1.0;
-                NNPriors = new Array(this.game.getNumActions());
-                for(let i = 0; i < this.game.getNumActions(); i++) {
-                    NNPriors[i] = 1.0 / this.game.getNumActions();
-                }
-            }
-
+            // Get the expected value of this node, from the NN
             expectedValue = NNValue;
 
             // Get the Boolean[] of valid actions from this state
@@ -318,7 +308,7 @@ class MCTS {
         return this.rootNode.isFinalState;
     }
 
-    iterate() {
+    async iterate() {
         const cPuctInit = 1.25; // Training
         const cPuctBase = 18000;
         // const cPuctInit = 2.4; // MatchPlay
@@ -334,7 +324,7 @@ class MCTS {
         // Make sure the rootNode has been visited at least once,
         // So that its childrens' data is initialized
         if (this.rootNode.numVisits == 0) {
-            this.simulate(cPuctInit, cPuctBase);
+            await this.simulate(cPuctInit, cPuctBase);
         }
 
         // Adjust the prior probabilities of the rootnode, using Dirichlet Noise
@@ -351,14 +341,11 @@ class MCTS {
 
         // Run many simulations, as part of MCTS evaluation of the root node
         while(this.rootNode.numVisits < this.args.numMCTSSims) {
-            this.simulate(cPuctInit, cPuctBase);
+            await this.simulate(cPuctInit, cPuctBase);
         }
     }
     
     sampleMove() {
-        const Temperature = 0.0; // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-        // const Temperature = 0.0; // MatchPlay
-
         // ==============
         // Save the result for future training of the NN
         // ==============
@@ -383,7 +370,7 @@ class MCTS {
 
         let chosenAction = -1;
 
-        if (Temperature < 0.01) {
+        if (this.args.temperature < 0.01) {
             // If Temperature is small enough, just sample the best move
             let bestN = -1;
             for(let i = 0; i < this.game.getNumActions(); i++) {
@@ -404,7 +391,7 @@ class MCTS {
             let probSum = 0;
             for(let i = 0; i < this.game.getNumActions(); i++) {
                 if (this.rootNode.validActions[i]) {
-                    probabilityDistribution[i] = Math.pow(this.rootNode.children[i].numVisits, 1.0/Temperature);
+                    probabilityDistribution[i] = Math.pow(this.rootNode.children[i].numVisits, 1.0/this.args.temperature);
                     probSum += probabilityDistribution[i];
                 }
             }
@@ -496,7 +483,7 @@ class MCTS {
             let textMetrics = ctx.measureText(text);
             ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 - height / 2);
             // Draw Q
-            text = 'Q = ' + node.avgValue.toPrecision(2);
+            text = 'Q = ' + node.avgValue.toFixed(2);
             if (node.isFinalState) {
                 text += "~";
             }
@@ -522,7 +509,7 @@ class MCTS {
             let textMetrics = ctx.measureText(text);
             ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 - height / 2);
             // Draw Q
-            text = 'Q = ' + chanceNode.avgValue.toPrecision(2);
+            text = 'Q = ' + chanceNode.avgValue.toFixed(2);
             textMetrics = ctx.measureText(text);
             ctx.fillText(text, x + NODE_WIDTH / 2 - textMetrics.width / 2, y + NODE_WIDTH / 2 + height / 2);
         }
@@ -562,13 +549,13 @@ class MCTS {
                     let chanceNode = node.children[i];
                     let chanceNodeColumn = column + totalWidth;
                     let msg = "a=" + i + "\n";
-                    msg += "pr=" + node.priorPolicy[i].toPrecision(2);
+                    msg += "pr=" + node.priorPolicy[i].toFixed(2);
                     drawPath(column, row, chanceNodeColumn, row + 1, msg);
                     drawChanceNode(chanceNode, chanceNodeColumn, row + 1);
                     for(let j = 0; j < chanceNode.numPossibilities; j++) {
                         let childNode = chanceNode.childNodes[j];
-                        let msg =  "p=" + chanceNode.probabilities[j].toPrecision(2) + "\n";
-                        msg += "r=" + (chanceNode.immediateRewards[j] == null ? "none" : chanceNode.immediateRewards[j]!.toPrecision(2));
+                        let msg =  "p=" + chanceNode.probabilities[j].toFixed(2) + "\n";
+                        msg += "r=" + (chanceNode.immediateRewards[j] == null ? "none" : chanceNode.immediateRewards[j]!.toFixed(2));
                         drawPath(chanceNodeColumn, row + 1, column + totalWidth, row + 2, msg);
                         let childWidth = dfs(childNode, column + totalWidth, row + 2);
                         totalWidth += childWidth;
