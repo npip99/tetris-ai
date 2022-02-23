@@ -1,4 +1,7 @@
 import * as tf from '@tensorflow/tfjs-node-gpu';
+import path from 'path';
+import fs from 'fs';
+import { spawn } from 'child_process';
 
 class NN {
     model: tf.LayersModel;
@@ -155,7 +158,35 @@ class NN {
 
         this.model = model;
     }
+
+    getNNModel() {
+        return this.model;
+    }
+
+    async getInt8NNModel() {
+        // Save the model
+        await this.model.save('file://' + path.resolve('../../models/MyModel'));
+        // Convert to an int8 graph model
+        await new Promise(function (resolve, reject) {
+            let child = spawn("./convert-model.sh", [
+                "--input_format=tfjs_layers_model",
+                "--output_format=tfjs_graph_model",
+                "--quantize_uint8", "*",
+                "./models/MyModel/model.json",
+                "./models/Int8Model",
+            ], {
+                cwd: path.resolve('../..'),
+            });
+            child.addListener("error", reject);
+            child.addListener("exit", resolve);
+        });
+        // Get the newly converted model
+        let graphModel = await tf.loadGraphModel('file://' + path.resolve('../../models/Int8Model/model.json'));
+        return graphModel;
+    }
 };
+
+type TFModel = tf.LayersModel | tf.GraphModel;
 
 class NNBatcher {
     // How many requests to accumulate in each batch
@@ -164,14 +195,14 @@ class NNBatcher {
     // even if the batch size isn't full yet
     latencyMS: number;
     // NN model
-    NNModel: tf.LayersModel;
+    nnModel: TFModel;
     // Pending inputs, callbacks, and result promises
-    pendingNNInput: tf.Tensor3D[] = [];
-    pendingResolutionCalls: ((_: number[][]) => void)[] = [];
-    pendingNNResults: Promise<number[][]>[] = [];
+    pendingNNInput: tf.Tensor3D[];
+    pendingResolutionCalls: ((_: number[][]) => void)[];
+    pendingNNResults: Promise<number[][]>[];
 
-    constructor(NNModel: tf.LayersModel, batchSize: number, latencyMS: number) {
-        this.NNModel = NNModel;
+    constructor(nnModel: TFModel, batchSize: number, latencyMS: number) {
+        this.nnModel = nnModel;
         this.batchSize = batchSize;
         this.latencyMS = latencyMS;
 
@@ -188,7 +219,7 @@ class NNBatcher {
             let prevNNPendingInput = this.pendingNNInput;
             setTimeout(() => {
                 // Assuming it's still waiting on the same input,
-                // then it's been too long, so dispatch it out
+                // then it's been too long, so dispatch the calculation out
                 if (this.pendingNNInput == prevNNPendingInput) {
                     this.dispatchNNCalculation();
                 }
@@ -232,8 +263,10 @@ class NNBatcher {
             }
             let batchedInputTensor: tf.Tensor4D = tf.tensor4d(inputBatch);
 
-            // Calculate the result
-            let resultTensor: tf.Tensor2D[] = this.NNModel.predictOnBatch(batchedInputTensor) as tf.Tensor2D[];
+            // Calculate the result, using a batch-size of the entire array
+            let resultTensor: tf.Tensor2D[] = this.nnModel.predict(batchedInputTensor, {
+                'batchSize': numPendingCalculations,
+            }) as tf.Tensor2D[];
 
             // Gather and distribute the result
             let valueResult = await resultTensor[0].array();

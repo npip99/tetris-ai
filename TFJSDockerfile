@@ -1,24 +1,16 @@
-FROM continuumio/anaconda3
+FROM python:3.8.12
 
-RUN . /root/.bashrc \
-    && conda upgrade conda \
-    && conda create -n tf \
-    && conda activate tf \
-    && pip install --upgrade pip
+SHELL ["/bin/bash", "--login", "-c"]
 
-RUN . /root/.bashrc \
-    && conda activate tf \
-    && conda install tensorflow==2.5.0
+RUN if [[ "$(uname -m)" == "aarch64" ]]; then \
+        pip install tensorflow-aarch64; \
+    else \
+        pip install tensorflow; \
+    fi
 
-# conda-forge grpcio==1.34.0 needed for ARM64
-RUN . /root/.bashrc \
-     && conda activate tf \
-     && conda install -c conda-forge grpcio==1.34.0 \
-     && pip install tensorflowjs
+RUN pip install tensorflow_hub
 
-RUN echo '#!/bin/bash\n\
-. /root/.bashrc\n\
-conda activate tf\n\
-tensorflowjs_converter "$@"\n\
-' >> /usr/local/bin/tensorflowjs_converter && chmod +x /usr/local/bin/tensorflowjs_converter
+RUN pip install --no-deps tensorflowjs
+
+WORKDIR /root
 
