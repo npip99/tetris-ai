@@ -1,0 +1,24 @@
+FROM continuumio/anaconda3
+
+RUN . /root/.bashrc \
+    && conda upgrade conda \
+    && conda create -n tf \
+    && conda activate tf \
+    && pip install --upgrade pip
+
+RUN . /root/.bashrc \
+    && conda activate tf \
+    && conda install tensorflow==2.5.0
+
+# conda-forge grpcio==1.34.0 needed for ARM64
+RUN . /root/.bashrc \
+     && conda activate tf \
+     && conda install -c conda-forge grpcio==1.34.0 \
+     && pip install tensorflowjs
+
+RUN echo '#!/bin/bash\n\
+. /root/.bashrc\n\
+conda activate tf\n\
+tensorflowjs_converter "$@"\n\
+' >> /usr/local/bin/tensorflowjs_converter && chmod +x /usr/local/bin/tensorflowjs_converter
+
