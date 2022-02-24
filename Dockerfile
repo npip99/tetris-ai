@@ -27,6 +27,10 @@ RUN sudo apt-get update \
 WORKDIR /home/ubuntu
 RUN rm -r ./vimrc
 
+# Setup tensorflowjs
+RUN pip install --upgrade pip \
+    && pip install tensorflowjs
+
 # Copy the tetris-ai directory
 COPY . /home/ubuntu/tetris-ai
 RUN sudo chown -R ubuntu /home/ubuntu/tetris-ai
@@ -38,3 +42,5 @@ RUN sudo apt-get update \
     && sudo apt-get autoremove -y \
     && sudo apt-get clean \
     && sudo rm -rf /tmp/* /var/tmp/*
+
+RUN echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc
