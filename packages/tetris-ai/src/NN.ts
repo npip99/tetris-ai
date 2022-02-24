@@ -159,7 +159,7 @@ class NN {
         this.model = model;
     }
 
-    getNNModel() {
+    async getNNModel() {
         return this.model;
     }
 
