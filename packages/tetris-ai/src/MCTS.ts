@@ -6,7 +6,9 @@ import * as fs from 'fs';
 interface MCTSArgs {
     // 50 for Atari, 800 for Go/Chess/Shogi
     numMCTSSims: number,
-    // 0.95-1.0, decay factor
+    // Max number of simultaneous simulations at a time
+    numParallelSims?: number,
+    // 0.90-1.0, decay factor
     gamma: number,
     // 0.0-infinity, temperature
     temperature: number,
@@ -28,6 +30,12 @@ class Node {
     originalValue: number;
     // Q = originalValue / N + Sum_i (N_i / N) * Q_i
     avgValue: number;
+    // The number of threads currently visiting this path
+    // (Used when numParallelSims > 1)
+    numVisitingThreads: number;
+    // Gets set when numVisits == 0 && numVisitingThreads > 0,
+    // The promise finishes when the node has been evaluated
+    expandingPromise?: Promise<void>;
     // Children Data [Only set when numVisits > 0, and !isFinalState]
     validActions: Boolean[];
     priorPolicy: number[];
@@ -37,6 +45,7 @@ class Node {
         this.gameState = gameState;
         this.isFinalState = isFinalState;
         this.numVisits = 0;
+        this.numVisitingThreads = 0;
         this.avgValue = unexploredValue;
     }
 };
@@ -46,6 +55,9 @@ class ChanceNode {
     numVisits: number;
     // Q = Weighted average of Q values of children Nodes
     avgValue: number;
+    // The number of threads currently visiting this path
+    // (Used when numParallelSims > 1)
+    numVisitingThreads: number;
 
     // Number of possibilities in this chance node
     numPossibilities: number;
@@ -66,11 +78,15 @@ class MCTS {
     trainingData: TrainingData[];
 
     constructor(game: AbstractGame, rootGameState: GameState, getNNetResult: getNNResultLambda, args: MCTSArgs) {
+        this.args = {...args};
+        if (this.args.numParallelSims == undefined) {
+            this.args.numParallelSims = 1;
+        }
+
         this.game = game;
         this.rootNode = new Node(rootGameState, 0.0, this.game.getGameEnded(rootGameState));
         //this.decisionPath = [this.rootNode];
         this.getNNetResult = getNNetResult;
-        this.args = args;
         this.trainingData = [];
     }
 
@@ -82,7 +98,12 @@ class MCTS {
         let path = [];
 
         // While we're not on a leaf node,
-        while(currentNode.numVisits > 0 && !currentNode.isFinalState) {
+        while(currentNode.numVisits + currentNode.numVisitingThreads > 0 && !currentNode.isFinalState) {
+            // We're waiting on numVisitingThreads to finish visiting that node
+            if (currentNode.numVisits == 0) {
+                await currentNode.expandingPromise;
+            }
+
             // ================
             // Selection
             // ================
@@ -107,14 +128,19 @@ class MCTS {
             for(let i = 0; i < this.game.getNumActions(); i++) {
                 if (currentNode.validActions[i]) {
                     let childChanceNode = currentNode.children[i];
+                    let numParentVisits = currentNode.numVisits + currentNode.numVisitingThreads;
+                    let numChildVisits = childChanceNode.numVisits + childChanceNode.numVisitingThreads;
                     // cPuct, from Init and Base
-                    let cPuct = cPuctInit + Math.log( 1.0 + currentNode.numVisits / cPuctBase );
-                    // Q(s, a)
-                    let avgDiscountedReward = childChanceNode.avgValue;
+                    let cPuct = cPuctInit + Math.log( 1.0 + numParentVisits / cPuctBase );
+                    // Q(s, a) = Average value of the chance node
+                    // For virtual loss (vl), we presume we visited the child, but got a value of 0 from the search
+                    // Q_vl(s, a) = Q(s, a) * childChanceNode.numVisits / (childChanceNode.numVisits + childChanceNode.numVisitingThreads)
+                    // Q_{virtual loss} = Total Score from actual visits, divided by number of actual + virtual visits
+                    let Qvl = childChanceNode.avgValue * (childChanceNode.numVisits / numChildVisits);
                     // U(s, a)
-                    let uFactor = cPuct * currentNode.priorPolicy[i] * Math.sqrt(currentNode.numVisits) / (childChanceNode.numVisits + 1);
+                    let uFactor = cPuct * currentNode.priorPolicy[i] * Math.sqrt(numParentVisits) / (numChildVisits + 1);
                     // PUCTvalue = Q(s, a) + U(s, a)
-                    let PUCT = avgDiscountedReward + uFactor;
+                    let PUCT = Qvl + uFactor;
                     // Select the action with the highest PUCT
                     if (bestAction == -1 || PUCT > bestPUCT) {
                         bestAction = i;
@@ -124,7 +150,13 @@ class MCTS {
             }
 
             // Go down the path from that action, and track all the nodes/edges we've taken
+            currentNode.numVisitingThreads++;
             let nextChanceNode = currentNode.children[bestAction];
+            nextChanceNode.numVisitingThreads++;
+
+            // ================
+            // Sampling the ChanceNode to get back to a Node
+            // ================
 
             // Get the probabilitiy of a Non-Final-State childnodes
             let cumulativeNonFinalProb = 0.0;
@@ -137,6 +169,9 @@ class MCTS {
             // Sample from the chance node
             let nextChanceChoice = 0;
             for(let i = 0; i < nextChanceNode.numPossibilities; i++) {
+                // numVisitingThreads includes this thread,
+                // so chanceNodeVisits is the # of visits including this visit.
+                let chanceNodeVisits = nextChanceNode.numVisits + nextChanceNode.numVisitingThreads;
                 let childNode = nextChanceNode.childNodes[i];
                 // The number of expected visits this node should have,
                 // After we finish visiting nextChanceNode
@@ -149,14 +184,14 @@ class MCTS {
                         // Weight visits by the probability among non-final-nodes
                         // TODO?: Maybe make this be based on the expected variance of the child
                         // (Situations with low variance don't need to be explored as much)
-                        expectedVisits = (nextChanceNode.numVisits + 1.0) * (nextChanceNode.probabilities[i] / cumulativeNonFinalProb);
+                        expectedVisits = chanceNodeVisits * (nextChanceNode.probabilities[i] / cumulativeNonFinalProb);
                     }
                 } else {
                     // If all states are final, it's fine pick one
-                    expectedVisits = (nextChanceNode.numVisits + 1.0) * nextChanceNode.probabilities[i];
+                    expectedVisits = chanceNodeVisits * nextChanceNode.probabilities[i];
                 }
                 // If this node hasn't been visited it's proportioned number of times, choose it
-                if (childNode.numVisits < expectedVisits) {
+                if (childNode.numVisits + childNode.numVisitingThreads < expectedVisits) {
                     nextChanceChoice = i;
                     break;
                 }
@@ -166,6 +201,13 @@ class MCTS {
             path.push([currentNode, bestAction, nextChanceChoice]);
             currentNode = nextChanceNode.childNodes[nextChanceChoice];
         }
+        // Mark us as using that node right now
+        currentNode.numVisitingThreads++;
+        // Create a promise that gets resolved when we're done visiting the node
+        let pendingResolution: () => void;
+        currentNode.expandingPromise = new Promise<void>((resolve, reject) => {
+            pendingResolution = resolve;
+        });
 
         // ================
         // Expand the leaf
@@ -215,6 +257,7 @@ class MCTS {
                     let childChanceNode = new ChanceNode();
                     childChanceNode.numVisits = 0.0;
                     childChanceNode.avgValue = 0.0; // Calculate avgValue below
+                    childChanceNode.numVisitingThreads = 0;
                     childChanceNode.numPossibilities = nextStates.length;
                     childChanceNode.probabilities = new Array(nextStates.length);
                     childChanceNode.immediateRewards = new Array(nextStates.length);
@@ -259,6 +302,7 @@ class MCTS {
         currentNode.numVisits++;
         currentNode.originalValue = expectedValue;
         currentNode.avgValue = expectedValue;
+        currentNode.numVisitingThreads--;
 
         // ================
         // Backpropagate the leaf's value
@@ -289,6 +333,7 @@ class MCTS {
             // Update that ChanceNode
             prevChanceNode.avgValue = newChandeNodeQ;
             prevChanceNode.numVisits++;
+            prevChanceNode.numVisitingThreads--;
             
             // Node's Q = OriginalValue / N + Sum (N_i / N) * Q_i, over all child ChanceNodes
             let newNodeN = prevNode.numVisits + 1;
@@ -301,7 +346,11 @@ class MCTS {
             // Update that previous Node
             prevNode.avgValue = newNodeQ;
             prevNode.numVisits = newNodeN;
+            prevNode.numVisitingThreads--;
         }
+
+        // Mark the node a resolved
+        pendingResolution();
     }
 
     isGameOver() {
@@ -339,10 +388,25 @@ class MCTS {
         // Run a set number of simulations
         // ==============
 
-        // Run many simulations, as part of MCTS evaluation of the root node
-        while(this.rootNode.numVisits < this.args.numMCTSSims) {
-            await this.simulate(cPuctInit, cPuctBase);
+        // Run numParallelSims simulations in parallel,
+        // With the plan to run numMCTSSims simulations total
+        let parallelSimPromises = [];
+        let numSims = 0;
+        for(let i = 0; i < this.args.numParallelSims; i++) {
+            parallelSimPromises.push(new Promise<void>((resolve, reject) => {
+                (async () => {
+                    // While there's still simulations to do, simulate
+                    while(numSims < this.args.numMCTSSims) {
+                        numSims++;
+                        await this.simulate(cPuctInit, cPuctBase);
+                    }
+                    // Once we're done, resolve the promise
+                    resolve();
+                })();
+            }));
         }
+        // Wait for all the promises to resolve
+        await Promise.all(parallelSimPromises);
     }
     
     sampleMove() {
