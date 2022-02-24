@@ -17,7 +17,7 @@ setTimeout(async () => {
     const NUM_SIMULTANEOUS_MCTS = 64;
     const BATCH_SIZE = 64;
 
-    let nnBatcher = new NNBatcher(await fallingStarNN.getInt8NNModel(), BATCH_SIZE, 1.0);
+    let nnBatcher = new NNBatcher(await fallingStarNN.getNNModel(), BATCH_SIZE, 1.0);
 
     let numEvaluations = 0;
     let getNNResult = async (inputTensor: tf.Tensor3D): Promise<number[][]> => {
