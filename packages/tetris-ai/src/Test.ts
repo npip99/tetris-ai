@@ -14,8 +14,9 @@ setTimeout(async () => {
     let fallingStarNN = new NN(shape[2], shape[1], shape[0], fallingStarGame.getNumActions());
 
     // Get batched NN results
+    const BATCH_SIZE = 256;
     const NUM_SIMULTANEOUS_MCTS = 64;
-    const BATCH_SIZE = 64;
+    const MCTS_BATCH_SIZE = 4;
 
     let nnBatcher = new NNBatcher(await fallingStarNN.getNNModel(), BATCH_SIZE, 1.0);
 
@@ -37,6 +38,7 @@ setTimeout(async () => {
             // Run a MCTS from the initial state
             let fallingStarMCTS = new MCTS(fallingStarGame, fallingStarInitState, getNNResult, {
                 numMCTSSims: 100,
+                numParallelSims: MCTS_BATCH_SIZE,
                 gamma: 0.99,
                 // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
                 temperature: 1.0,
