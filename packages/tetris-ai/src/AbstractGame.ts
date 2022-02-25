@@ -1,8 +1,10 @@
 import * as tf from '@tensorflow/tfjs-node-gpu';
 
+type GameInputTensor = number[][][];
+
 class GameState {
-    toTensor(): tf.Tensor3D {
-        return tf.tensor3d([]);
+    toTensor(): GameInputTensor {
+        return [];
     }
 
     toString(): string {
@@ -52,6 +54,7 @@ class AbstractGame {
 
 export {
     GameState,
+    GameInputTensor,
     GameTransition,
     AbstractGame
 };

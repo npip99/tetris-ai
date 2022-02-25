@@ -1,5 +1,6 @@
 import { MCTS } from "./MCTS";
 import { NN, NNBatcher } from "./NN";
+import { GameInputTensor } from "./AbstractGame";
 import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
 import promptSync from 'prompt-sync';
 import * as tf from '@tensorflow/tfjs-node-gpu';
@@ -10,8 +11,8 @@ setTimeout(async () => {
     let fallingStarGame = new FallingStarAbstractGame();
 
     // Get the shape of the tensor, and make a NN from it
-    let shape = fallingStarGame.getInitialState().toTensor().shape;
-    let fallingStarNN = new NN(shape[2], shape[1], shape[0], fallingStarGame.getNumActions());
+    let initInputTensor = fallingStarGame.getInitialState().toTensor();
+    let fallingStarNN = new NN(initInputTensor, fallingStarGame.getNumActions());
 
     // Get batched NN results
     const BATCH_SIZE = 256;
@@ -21,7 +22,7 @@ setTimeout(async () => {
     let nnBatcher = new NNBatcher(await fallingStarNN.getNNModel(), BATCH_SIZE, 1.0);
 
     let numEvaluations = 0;
-    let getNNResult = async (inputTensor: tf.Tensor3D): Promise<number[][]> => {
+    let getNNResult = async (inputTensor: GameInputTensor): Promise<number[][]> => {
         // Await on the calculation to finish
         numEvaluations++;
         let result = await nnBatcher.getNNResult(inputTensor);

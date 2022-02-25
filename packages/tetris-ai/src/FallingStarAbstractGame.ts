@@ -1,5 +1,5 @@
 import * as tf from '@tensorflow/tfjs-node-gpu';
-import { GameState, GameTransition, AbstractGame } from './AbstractGame';
+import { GameState, GameTransition, AbstractGame, GameInputTensor } from './AbstractGame';
 
 const BOARD_WIDTH = 5;
 const BOARD_HEIGHT = 10;
@@ -28,44 +28,27 @@ class FallingStarState extends GameState {
     lazeredFrom: number;
     gameOver: Boolean;
 
-    toTensor(): tf.Tensor3D {
-        const createLayer = (lambda: (x: number, y: number) => number) => {
-            let layer: number[][] = [];
-            for(let y = 0; y < BOARD_HEIGHT; y++) {
-                layer.push([]);
-                for(let x = 0; x < BOARD_WIDTH; x++) {
-                    layer[y].push(lambda(x, y));
-                }
+    toTensor(): GameInputTensor {
+        let inputTensor: number[][][] = [];
+        for(let y = 0; y < BOARD_HEIGHT; y++) {
+            inputTensor.push([]);
+            for(let x = 0; x < BOARD_WIDTH; x++) {
+                inputTensor[y].push([null, null, null, null]);
+
+                // Player location channel
+                inputTensor[y][x][0] = y == BOARD_HEIGHT - 1 && x == this.playerLocation ? 1.0 : 0.0;
+
+                // Star location channel
+                inputTensor[y][x][1] = this.board[y][x] == FallingStarItemType.STAR ? 1.0 : 0.0;
+
+                // Enemy location channel
+                inputTensor[y][x][2] = this.board[y][x] == FallingStarItemType.ENEMY ? 1.0 : 0.0;
+
+                // Teleporting channel
+                inputTensor[y][x][3] = this.currentlyTeleporting ? 1.0 : 0.0;
             }
-            return layer;
-        };
-
-        // Player Location
-        let layer_1 = createLayer((x, y) => {
-            return y == BOARD_HEIGHT - 1 && x == this.playerLocation ? 1.0 : 0.0;
-        });
-
-        // Star Locations
-        let layer_2 = createLayer((x, y) => {
-            return this.board[y][x] == FallingStarItemType.STAR ? 1.0 : 0.0;
-        });
-
-        // Enemy Locations
-        let layer_3 = createLayer((x, y) => {
-            return this.board[y][x] == FallingStarItemType.ENEMY ? 1.0 : 0.0;
-        });
-
-        // Teleporting feature plane
-        let layer_4 = createLayer((x, y) => {
-            return this.currentlyTeleporting ? 1.0 : 0.0;
-        });
-
-        return tf.tensor3d([
-            layer_1,
-            layer_2,
-            layer_3,
-            layer_4,
-        ]);
+        }
+        return inputTensor;
     }
 
     toString() {

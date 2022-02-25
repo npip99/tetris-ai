@@ -1,4 +1,4 @@
-import { AbstractGame, GameState } from './AbstractGame';
+import { AbstractGame, GameState, GameInputTensor } from './AbstractGame';
 import * as tf from '@tensorflow/tfjs-node-gpu';
 import { createCanvas } from 'canvas';
 import * as fs from 'fs';
@@ -15,7 +15,7 @@ interface MCTSArgs {
 };
 
 interface TrainingData {
-    input: tf.Tensor3D;
+    input: GameInputTensor;
     value: number;
     policy: number[];
 };
@@ -67,7 +67,7 @@ class ChanceNode {
     childNodes: Node[];
 }
 
-type getNNResultLambda = (_: tf.Tensor3D) => Promise<number[][]>;
+type getNNResultLambda = (_: GameInputTensor) => Promise<number[][]>;
 
 class MCTS {
     game: AbstractGame;
@@ -220,7 +220,7 @@ class MCTS {
             expectedValue = 0.0;
         } else {
             // Query the Neural Network
-            let inputTensor: tf.Tensor3D = currentNode.gameState.toTensor().transpose([1, 2, 0]);
+            let inputTensor: GameInputTensor = currentNode.gameState.toTensor();
             let outputResult = await this.getNNetResult(inputTensor);
             let NNValue = outputResult[0][0];
             let NNPriors = outputResult[1];
@@ -417,7 +417,7 @@ class MCTS {
         // Save the training data from this iteration,
         // to train the next iteration of the neural network
         this.trainingData.push({
-            input: this.rootNode.gameState.toTensor().transpose([1, 2, 0]),
+            input: this.rootNode.gameState.toTensor(),
             value: this.rootNode.avgValue,
             policy: (new Array(this.game.getNumActions())).map((_, i) => {
                 if (this.rootNode.validActions[i]) {

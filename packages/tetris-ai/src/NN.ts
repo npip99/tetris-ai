@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 class NN {
     model: tf.LayersModel;
 
-    constructor(input_width: number, input_height: number, input_channels: number, output_actions: number) {
+    constructor(input_tensor: number[][][], output_actions: number) {
         // Topology parameters
         const numFilters = 64; // 256
         const numBlocks = 10; // 40
@@ -19,7 +19,7 @@ class NN {
 
         // Input
         const input = tf.input({
-            shape: [input_height, input_width, input_channels],
+            shape: [input_tensor.length, input_tensor[0].length, input_tensor[0][0].length],
         });
 
         // Parameters of conv blocks used in the main network
@@ -156,6 +156,10 @@ class NN {
             metrics: ['mse', 'categoricalCrossentropy'],
         });
 
+        // Prime the model, for quick evaluation later
+        let result = model.predict(tf.tensor4d([input_tensor]));
+        result[0].arraySync();
+
         this.model = model;
     }
 
@@ -197,7 +201,7 @@ class NNBatcher {
     // NN model
     nnModel: TFModel;
     // Pending inputs, callbacks, and result promises
-    pendingNNInput: tf.Tensor3D[];
+    pendingNNInput: (number[][][])[];
     pendingResolutionCalls: ((_: number[][]) => void)[];
     pendingNNResults: Promise<number[][]>[];
 
@@ -209,7 +213,7 @@ class NNBatcher {
         this.resetPendingBatch();
     }
 
-    getNNResult(inputTensor: tf.Tensor3D): Promise<number[][]> {
+    getNNResult(inputTensor: number[][][]): Promise<number[][]> {
         // Push the input, and get the promise we'll be waiting for
         let index = this.pendingNNInput.length;
         this.pendingNNInput.push(inputTensor);
@@ -249,7 +253,7 @@ class NNBatcher {
     // Dispatch the NN calculation, and clear anything pending
     dispatchNNCalculation() {
         // Dispatch the pending NN calculations
-        (async (NNInput: tf.Tensor3D[], resolutionCalls: ((_: number[][]) => void)[]) => {
+        (async (NNInput: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
             // Number of pending computations
             let numPendingCalculations = NNInput.length;
             if (numPendingCalculations == 0) {
@@ -257,11 +261,7 @@ class NNBatcher {
             }
 
             // Setup the input tensor
-            let inputBatch = [];
-            for(let i = 0; i < numPendingCalculations; i++) {
-                inputBatch.push(NNInput[i].arraySync());
-            }
-            let batchedInputTensor: tf.Tensor4D = tf.tensor4d(inputBatch);
+            let batchedInputTensor: tf.Tensor4D = tf.tensor4d(NNInput);
 
             // Calculate the result, using a batch-size of the entire array
             let resultTensor: tf.Tensor2D[] = this.nnModel.predict(batchedInputTensor, {
@@ -271,6 +271,13 @@ class NNBatcher {
             // Gather and distribute the result
             let valueResult = await resultTensor[0].array();
             let policyResult = await resultTensor[1].array();
+            // Free the tensors from the computation
+            tf.dispose([
+                batchedInputTensor,
+                resultTensor[0],
+                resultTensor[1],
+            ]);
+            // Pass the data to anyone waiting for it
             for(let i = 0; i < numPendingCalculations; i++) {
                 resolutionCalls[i]([
                     valueResult[i],
