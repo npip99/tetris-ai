@@ -1,5 +1,4 @@
 import { AbstractGame, GameState, GameInputTensor } from './AbstractGame';
-import * as tf from '@tensorflow/tfjs-node-gpu';
 import { createCanvas } from 'canvas';
 import * as fs from 'fs';
 

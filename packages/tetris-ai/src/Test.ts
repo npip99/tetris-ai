@@ -3,7 +3,6 @@ import { NN, NNBatcher } from "./NN";
 import { GameInputTensor } from "./AbstractGame";
 import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
 import promptSync from 'prompt-sync';
-import * as tf from '@tensorflow/tfjs-node-gpu';
 
 setTimeout(async () => {
     const prompt = promptSync({sigint: true});
@@ -76,4 +75,6 @@ setTimeout(async () => {
 
     let totalTime = (performance.now() - startTime);
     console.log("Avg Evaluation Time: %dms (%d Evaluations)", (totalTime/numEvaluations).toPrecision(3), numEvaluations);
+
+    fallingStarNN.destroy();
 }, 0);

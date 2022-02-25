@@ -1,196 +1,81 @@
-import * as tf from '@tensorflow/tfjs-node-gpu';
-import path from 'path';
-import fs from 'fs';
-import { spawn } from 'child_process';
+
+import Worker from 'web-worker';
+
+// Manage webworker
+
+let worker = null;
+
+function createWorker() {
+    const url = new URL('./NNWorker.js', 'file://' + __dirname + '/build');
+    worker = new Worker(url);
+
+    worker.addEventListener('message', e => {
+        let data = e.data;
+        if (data.type === 'MODEL_CREATED') {
+            pendingModels[data.id]();
+            delete pendingModels[data.id];
+        } else if (data.type == 'INFERENCE_RESPONSE') {
+            pendingInferences[data.id](data.resultData);
+            delete pendingInferences[data.id];
+        }
+    });
+}
+
+function destroyWorker() {
+    worker.terminate();
+    worker = null;
+}
+
+// Interface for the NN model and batcher
+
+type TFModel = number;
+
+let models: Record<TFModel, boolean> = {};
+let pendingModels: Record<TFModel, () => void> = {};
+let pendingInferences: Record<number, (_: number[][][]) => void> = {};
 
 class NN {
-    model: tf.LayersModel;
+    modelID: TFModel;
+    modelPromise: Promise<TFModel>;
 
     constructor(input_tensor: number[][][], output_actions: number) {
-        // Topology parameters
-        const numFilters = 64; // 256
-        const numBlocks = 10; // 40
-        const numSEChannels = 32;
-
-        // HyperParameters
-        const l2_parameter = 1e-4;
-        const learningRate = 1e-2;
-        const momentum = 0.9;
-
-        // Input
-        const input = tf.input({
-            shape: [input_tensor.length, input_tensor[0].length, input_tensor[0][0].length],
-        });
-
-        // Parameters of conv blocks used in the main network
-        const conv3x3_params = {
-            kernelSize: [3, 3],
-            filters: numFilters,
-            padding: 'same' as any, // Weird tfjs bug?
-            kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-        };
-
-        // The first Conv block
-        let mainNetwork = tf.layers.conv2d(conv3x3_params).apply(input);
-        mainNetwork = tf.layers.batchNormalization().apply(mainNetwork);
-        mainNetwork = tf.layers.reLU().apply(mainNetwork);
-
-        // Create a tower of resblocks
-        for(let i = 0; i < numBlocks; i++) {
-            // A single resBlock
-            let createResLayer = (inp: any) => {
-                // Conv layer 1
-                let residualLayer = tf.layers.conv2d(conv3x3_params).apply(inp);
-                residualLayer = tf.layers.batchNormalization().apply(residualLayer);
-                residualLayer = tf.layers.reLU().apply(residualLayer);
-
-                // Conv layer 2
-                residualLayer = tf.layers.conv2d(conv3x3_params).apply(residualLayer);
-                residualLayer = tf.layers.batchNormalization().apply(residualLayer);
-
-                // Combine
-                residualLayer = tf.layers.add().apply([inp, residualLayer]);
-                residualLayer = tf.layers.reLU().apply(residualLayer);
-
-                return residualLayer;
-            };
-
-            // Apply a resblock
-            mainNetwork = createResLayer(mainNetwork);
+        if (worker == null) {
+            createWorker();
         }
 
-        // Create the value head, ending in tanh,
-        // which will estimate the value of the position
-        let createValueHead = (inp: any) => {
-            let valueHead = inp;
-            // Value Head Layers
-            valueHead = tf.layers.conv2d({
-                kernelSize: [1, 1],
-                // https://medium.com/oracledevs/lessons-from-alpha-zero-part-5-performance-optimization-664b38dc509e
-                filters: 32,
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(valueHead);
-            valueHead = tf.layers.batchNormalization().apply(valueHead);
-            valueHead = tf.layers.reLU().apply(valueHead);
-            valueHead = tf.layers.flatten().apply(valueHead);
-            valueHead = tf.layers.dense({
-                units: 256,
-                useBias: true,
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(valueHead);
-            valueHead = tf.layers.reLU().apply(valueHead);
-            valueHead = tf.layers.dense({
-                units: 1,
-                useBias: true,
-                activation: 'sigmoid',
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(valueHead);
-    
-            return valueHead;
-        };
-
-        // Create the policy head, which gives the logits for various moves
-        let createPolicyHead = (inp: any) => {
-            let policyHead = inp;
-            // Policy Head Layers
-
-            /*
-            // Better policyHead
-            // https://github.com/LeelaChessZero/lc0/pull/712
-            policyHead = tf.layers.conv2d({
-                kernelSize: [3, 3],
-                filters: numFilters,
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(policyHead);
-            policyHead = tf.layers.batchNormalization().apply(policyHead);
-            policyHead = tf.layers.reLU().apply(policyHead);
-
-            policyHead = tf.layers.conv2d({
-                kernelSize: [3, 3],
-                filters: numFilters,
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(policyHead);
-            policyHead = tf.layers.batchNormalization().apply(policyHead);
-            policyHead = tf.layers.reLU().apply(policyHead);
-            policyHead = tf.layers.reshape({
-                targetShape: [output_num_actions],
-            }).apply(policyHead);
-            */
-
-            // Original AlphaGo policy head
-            policyHead = tf.layers.conv2d({
-                kernelSize: [1, 1],
-                filters: 32,
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(policyHead);
-            policyHead = tf.layers.batchNormalization().apply(policyHead);
-            policyHead = tf.layers.reLU().apply(policyHead);
-            policyHead = tf.layers.flatten().apply(policyHead);
-            policyHead = tf.layers.dense({
-                units: output_actions,
-                useBias: true,
-                activation: 'softmax',
-                kernelRegularizer: tf.regularizers.l2({l2: l2_parameter}),
-            }).apply(policyHead);
-
-            return policyHead;
-        };
-
-        // Create the value/policy head from the main resnet
-        let valueHead = createValueHead(mainNetwork);
-        let policyHead = createPolicyHead(mainNetwork);
-        
-        // Create the model
-        let model = tf.model({
-            inputs: input,
-            outputs: [valueHead as tf.SymbolicTensor, policyHead as tf.SymbolicTensor],
-        })
-
-        // Post a summary of the model
-        // model.summary();
-
-        // And compile the network with our loss function
-        model.compile({
-            optimizer: tf.train.momentum(learningRate, momentum),
-            loss: ['meanSquaredError', 'categoricalCrossentropy'],
-            metrics: ['mse', 'categoricalCrossentropy'],
+        this.modelID = Math.floor(Math.random() * 2147483647);
+        this.modelPromise = new Promise<TFModel>((resolve, reject) => {
+            pendingModels[this.modelID] = () => {
+                resolve(this.modelID);
+            };
         });
 
-        // Prime the model, for quick evaluation later
-        let result = model.predict(tf.tensor4d([input_tensor]));
-        result[0].arraySync();
-
-        this.model = model;
-    }
-
-    async getNNModel() {
-        return this.model;
-    }
-
-    async getInt8NNModel() {
-        // Save the model
-        await this.model.save('file://' + path.resolve('../../models/MyModel'));
-        // Convert to an int8 graph model
-        await new Promise(function (resolve, reject) {
-            let child = spawn("./convert-model.sh", [
-                "--input_format=tfjs_layers_model",
-                "--output_format=tfjs_graph_model",
-                "--quantize_uint8", "*",
-                "./models/MyModel/model.json",
-                "./models/Int8Model",
-            ], {
-                cwd: path.resolve('../..'),
-            });
-            child.addListener("error", reject);
-            child.addListener("exit", resolve);
+        models[this.modelID] = true;
+        worker.postMessage({
+            type: 'CREATE_MODEL',
+            input_tensor,
+            output_actions,
+            id: this.modelID,
         });
-        // Get the newly converted model
-        let graphModel = await tf.loadGraphModel('file://' + path.resolve('../../models/Int8Model/model.json'));
-        return graphModel;
+    }
+
+    async getNNModel(): Promise<TFModel> {
+        let model = await this.modelPromise;
+        return model;
+    }
+
+    async getInt8NNModel(): Promise<TFModel> {
+        throw new Error("Int8 not implemented yet with WebWorkers");
+    }
+
+    destroy() {
+        delete models[this.modelID];
+
+        if (Object.keys(models).length == 0) {
+            destroyWorker();
+        }
     }
 };
-
-type TFModel = tf.LayersModel | tf.GraphModel;
 
 class NNBatcher {
     // How many requests to accumulate in each batch
@@ -253,30 +138,34 @@ class NNBatcher {
     // Dispatch the NN calculation, and clear anything pending
     dispatchNNCalculation() {
         // Dispatch the pending NN calculations
-        (async (NNInput: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
+        (async (inputData: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
             // Number of pending computations
-            let numPendingCalculations = NNInput.length;
+            let numPendingCalculations = inputData.length;
             if (numPendingCalculations == 0) {
                 return;
             }
 
-            // Setup the input tensor
-            let batchedInputTensor: tf.Tensor4D = tf.tensor4d(NNInput);
+            // Setup a promise for the inference result
+            let inferenceID = Math.floor(Math.random() * 2147483647);
+            let inferencePromise = new Promise<number[][][]>((resolve, reject) => {
+                pendingInferences[inferenceID] = (data: number[][][]) => {
+                    resolve(data);
+                };
+            });
 
-            // Calculate the result, using a batch-size of the entire array
-            let resultTensor: tf.Tensor2D[] = this.nnModel.predict(batchedInputTensor, {
-                'batchSize': numPendingCalculations,
-            }) as tf.Tensor2D[];
+            // Request an inference
+            worker.postMessage({
+                type: 'INFERENCE_REQUEST',
+                id: inferenceID,
+                modelID: this.nnModel,
+                inputData,
+            });
 
-            // Gather and distribute the result
-            let valueResult = await resultTensor[0].array();
-            let policyResult = await resultTensor[1].array();
-            // Free the tensors from the computation
-            tf.dispose([
-                batchedInputTensor,
-                resultTensor[0],
-                resultTensor[1],
-            ]);
+            // Get the inference result
+            let inferenceResult = await inferencePromise;
+            let valueResult = inferenceResult[0];
+            let policyResult = inferenceResult[1];
+
             // Pass the data to anyone waiting for it
             for(let i = 0; i < numPendingCalculations; i++) {
                 resolutionCalls[i]([

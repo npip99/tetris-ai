@@ -1,5 +1,3 @@
-import * as tf from '@tensorflow/tfjs-node-gpu';
-
 type GameInputTensor = number[][][];
 
 class GameState {

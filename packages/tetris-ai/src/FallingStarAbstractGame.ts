@@ -1,4 +1,3 @@
-import * as tf from '@tensorflow/tfjs-node-gpu';
 import { GameState, GameTransition, AbstractGame, GameInputTensor } from './AbstractGame';
 
 const BOARD_WIDTH = 5;
