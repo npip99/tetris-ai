@@ -136,7 +136,7 @@ class MCTS {
                     // For virtual loss (vl), we presume we visited the child, but got a value of 0 from the search
                     // Q_vl(s, a) = Q(s, a) * childChanceNode.numVisits / (childChanceNode.numVisits + childChanceNode.numVisitingThreads)
                     // Q_{virtual loss} = Total Score from actual visits, divided by number of actual + virtual visits
-                    let Qvl = childChanceNode.avgValue * (childChanceNode.numVisits / numChildVisits);
+                    let Qvl = numChildVisits == 0 ? 0 : childChanceNode.avgValue * (childChanceNode.numVisits / numChildVisits);
                     // U(s, a)
                     let uFactor = cPuct * currentNode.priorPolicy[i] * Math.sqrt(numParentVisits) / (numChildVisits + 1);
                     // PUCTvalue = Q(s, a) + U(s, a)
