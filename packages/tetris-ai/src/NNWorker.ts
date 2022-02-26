@@ -12,7 +12,7 @@ async function createNNModel(input_tensor: number[][][], output_actions: number)
 
     // HyperParameters
     const l2_parameter = 1e-4;
-    const learningRate = 1e-2;
+    const learningRate = 0.005;
     const momentum = 0.9;
 
     // Input
@@ -185,7 +185,7 @@ async function createInt8NNModel(model: tf.LayersModel): Promise<tf.GraphModel> 
     return graphModel;
 }
 
-let models: Record<number, tf.LayersModel | tf.GraphModel> = {};
+let models: Record<number, tf.LayersModel> = {};
 
 addEventListener('message', async e => {
     let data = e.data;
@@ -209,22 +209,61 @@ addEventListener('message', async e => {
             'batchSize': nnInput.length,
         }) as tf.Tensor2D[];
 
-        // Gather and distribute the result
-        let valueResult = await resultTensor[0].array();
-        let policyResult = await resultTensor[1].array();
+        // Gather the results
+        let results = await Promise.all(
+            resultTensor.map(a => a.array()),
+        );
 
         // Free the tensors from the computation
-        batchedInputTensor.dispose();
+        tf.dispose(batchedInputTensor);
         tf.dispose(resultTensor);
 
         // Post back the inference response
         postMessage({
             type: 'INFERENCE_RESPONSE',
             id: inferenceID,
-            resultData: [
-                valueResult,
-                policyResult,
-            ],
+            resultData: results,
+        });
+    } else if (data.type == 'TRAIN_REQUEST') {
+        interface NNTrainingData {
+            input: number[][][],
+            output: number[][],
+        };
+
+        let trainingData = data.trainingData as NNTrainingData[];
+        let trainingBatchSize = data.trainingBatchSize as number;
+        let numEpochs = data.numEpochs as number;
+        let modelID = data.modelID as number;
+        let model = models[modelID];
+        let trainID = data.id as number;
+
+        // Setup the input/output
+        let inputData = tf.tensor4d(trainingData.map(a => a.input));
+        let outputData = trainingData[0].output.map((_, i) => {
+            return tf.tensor2d(trainingData.map(a => a.output[i]));
+        });
+
+        // Train the model
+        let history = await model.fit(inputData, outputData, {
+            batchSize: trainingBatchSize,
+            validationSplit: 0.01,
+            epochs: numEpochs,
+            verbose: 0,
+            shuffle: true,
+        });
+
+        // Free any tensors
+        tf.dispose(inputData);
+        tf.dispose(outputData);
+
+        // Save the newly trained model
+        // await model.save('file://' + path.resolve('../../models/Model' + modelID + '_Train' + trainID));
+
+        // Post back the training response, to indicate competion
+        postMessage({
+            type: 'TRAIN_RESPONSE',
+            id: trainID,
+            lossData: history.history.val_loss,
         });
     }
 });

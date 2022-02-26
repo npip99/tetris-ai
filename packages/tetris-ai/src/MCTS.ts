@@ -13,9 +13,10 @@ interface MCTSArgs {
     temperature: number,
 };
 
-interface TrainingData {
+interface MCTSTrainingData {
     input: GameInputTensor;
-    value: number;
+    expectedValue: number;
+    actualValue: number;
     policy: number[];
 };
 
@@ -74,7 +75,10 @@ class MCTS {
     decisionPath: Node[];
     getNNetResult: getNNResultLambda;
     args: MCTSArgs;
-    trainingData: TrainingData[];
+    // Training Data
+    trainingData: MCTSTrainingData[];
+    // Immediate Rewards during iterations
+    immediateRewards: (number | null)[];
 
     constructor(game: AbstractGame, rootGameState: GameState, getNNetResult: getNNResultLambda, args: MCTSArgs) {
         this.args = {...args};
@@ -87,6 +91,7 @@ class MCTS {
         //this.decisionPath = [this.rootNode];
         this.getNNetResult = getNNetResult;
         this.trainingData = [];
+        this.immediateRewards = [];
     }
 
     async simulate(cPuctInit: number, cPuctBase: number) {
@@ -410,24 +415,6 @@ class MCTS {
     
     sampleMove() {
         // ==============
-        // Save the result for future training of the NN
-        // ==============
-
-        // Save the training data from this iteration,
-        // to train the next iteration of the neural network
-        this.trainingData.push({
-            input: this.rootNode.gameState.toTensor(),
-            value: this.rootNode.avgValue,
-            policy: (new Array(this.game.getNumActions())).map((_, i) => {
-                if (this.rootNode.validActions[i]) {
-                    return this.rootNode.children[i].numVisits / (this.rootNode.numVisits - 1);
-                } else {
-                    return 0.0;
-                }
-            }),
-        });
-
-        // ==============
         // Sample the probability distribution to get the next action
         // ==============
 
@@ -506,8 +493,54 @@ class MCTS {
             }
         }
 
+        // ==============
+        // Save the result for future training of the NN
+        // ==============
+
+        // Save the training data from this iteration,
+        // to train the next iteration of the neural network
+        this.trainingData.push({
+            input: this.rootNode.gameState.toTensor(),
+            expectedValue: this.rootNode.avgValue,
+            actualValue: null,
+            policy: Array.from({length: this.game.getNumActions()}, (_, i) => {
+                if (this.rootNode.validActions[i]) {
+                    // Exclude the visit that landed on only the rootNode itself
+                    return this.rootNode.children[i].numVisits / (this.rootNode.numVisits - 1);
+                } else {
+                    return 0.0;
+                }
+            }),
+        });
+        // Push the immediateReward obtained from that decision, to train against later
+        let immediateReward = chosenChanceNode.immediateRewards[chosenSample];
+        this.immediateRewards.push(immediateReward);
+
+        // ==============
+        // Update the rootNode using the selection
+        // ==============
+
         // Set the rootNode to this new Node
         this.rootNode = chosenChanceNode.childNodes[chosenSample];
+    }
+
+    getTrainingData(): MCTSTrainingData[] {
+        // Start cumulativeScore with the value of the leaf node
+        let cumulativeScore: number;
+        if (this.rootNode.isFinalState) {
+            cumulativeScore = 0.0;
+        } else {
+            cumulativeScore = this.rootNode.avgValue;
+        }
+        // Populate the actual value of the training data, using the actual score achieved
+        for(let i = this.immediateRewards.length - 1; i >= 0; i--) {
+            let immediateReward = this.immediateRewards[i];
+            if (immediateReward != null) {
+                cumulativeScore = (1 - this.args.gamma) * immediateReward + this.args.gamma * cumulativeScore;
+            }
+            this.trainingData[i].actualValue = cumulativeScore;
+        }
+        return this.trainingData;
     }
 
     drawTree(rootNode: Node) {
@@ -668,5 +701,6 @@ class MCTS {
 };
 
 export {
-    MCTS
+    MCTS,
+    MCTSTrainingData,
 };

@@ -1,15 +1,30 @@
 
 import Worker from 'web-worker';
 
+
+// Interface for the NN model and batcher
+
+type TFModel = number;
+interface NNTrainingData {
+    input: number[][][],
+    output: number[][],
+};
+
+type LossData = number[];
+
 // Manage webworker
 
 let worker = null;
+let models: Record<TFModel, boolean> = {};
+let pendingModels: Record<TFModel, () => void> = {};
+let pendingInferences: Record<number, (_: number[][][]) => void> = {};
+let pendingTraining: Record<number, (_: LossData) => void> = {};
 
 function createWorker() {
     const url = new URL('./NNWorker.js', 'file://' + __dirname + '/build');
     worker = new Worker(url);
 
-    worker.addEventListener('message', e => {
+    worker.addEventListener('message', (e: any) => {
         let data = e.data;
         if (data.type === 'MODEL_CREATED') {
             pendingModels[data.id]();
@@ -17,6 +32,9 @@ function createWorker() {
         } else if (data.type == 'INFERENCE_RESPONSE') {
             pendingInferences[data.id](data.resultData);
             delete pendingInferences[data.id];
+        } else if (data.type == 'TRAIN_RESPONSE') {
+            pendingTraining[data.id](data.lossData);
+            delete pendingTraining[data.id];
         }
     });
 }
@@ -26,13 +44,7 @@ function destroyWorker() {
     worker = null;
 }
 
-// Interface for the NN model and batcher
-
-type TFModel = number;
-
-let models: Record<TFModel, boolean> = {};
-let pendingModels: Record<TFModel, () => void> = {};
-let pendingInferences: Record<number, (_: number[][][]) => void> = {};
+// Neural Network
 
 class NN {
     modelID: TFModel;
@@ -68,6 +80,57 @@ class NN {
         throw new Error("Int8 not implemented yet with WebWorkers");
     }
 
+    async evaluateBatch(inputData: (number[][][])[]): Promise<(number[][])[]> {
+        // Make sure the model exists first
+        await this.getNNModel();
+
+        // Setup a promise for the inference result
+        let inferenceID = Math.floor(Math.random() * 2147483647);
+        let inferencePromise = new Promise<number[][][]>((resolve, reject) => {
+            pendingInferences[inferenceID] = (data: number[][][]) => {
+                resolve(data);
+            };
+        });
+
+        // Request an inference
+        worker.postMessage({
+            type: 'INFERENCE_REQUEST',
+            id: inferenceID,
+            modelID: this.modelID,
+            inputData: inputData,
+        });
+
+        // Get the inference result
+        let inferenceResult = await inferencePromise;
+        return inferenceResult;
+    }
+
+    async trainBatch(trainingData: NNTrainingData[], trainingBatchSize: number, numEpochs: number): Promise<LossData> {
+        // Make sure the model exists first
+        await this.getNNModel();
+
+        // Setup a promise for the inference result
+        let trainID = Math.floor(Math.random() * 2147483647);
+        let trainPromise = new Promise<LossData>((resolve, reject) => {
+            pendingTraining[trainID] = (data: LossData) => {
+                resolve(data);
+            };
+        });
+
+        // Request an inference
+        worker.postMessage({
+            type: 'TRAIN_REQUEST',
+            id: trainID,
+            modelID: this.modelID,
+            trainingData: trainingData,
+            trainingBatchSize: trainingBatchSize,
+            numEpochs: numEpochs,
+        });
+
+        // Wait for the training to finish
+        return await trainPromise;
+    }
+
     destroy() {
         delete models[this.modelID];
 
@@ -83,15 +146,15 @@ class NNBatcher {
     // Max amount of time to wait before dispatching,
     // even if the batch size isn't full yet
     latencyMS: number;
-    // NN model
-    nnModel: TFModel;
+    // NN
+    nnet: NN;
     // Pending inputs, callbacks, and result promises
     pendingNNInput: (number[][][])[];
     pendingResolutionCalls: ((_: number[][]) => void)[];
     pendingNNResults: Promise<number[][]>[];
 
-    constructor(nnModel: TFModel, batchSize: number, latencyMS: number) {
-        this.nnModel = nnModel;
+    constructor(nnet: NN, batchSize: number, latencyMS: number) {
+        this.nnet = nnet;
         this.batchSize = batchSize;
         this.latencyMS = latencyMS;
 
@@ -139,35 +202,17 @@ class NNBatcher {
     dispatchNNCalculation() {
         // Dispatch the pending NN calculations
         (async (inputData: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
-            // Number of pending computations
-            let numPendingCalculations = inputData.length;
-            if (numPendingCalculations == 0) {
-                return;
+            if (inputData.length == 0) {
+                throw new Error("The batch is empty!");
             }
 
-            // Setup a promise for the inference result
-            let inferenceID = Math.floor(Math.random() * 2147483647);
-            let inferencePromise = new Promise<number[][][]>((resolve, reject) => {
-                pendingInferences[inferenceID] = (data: number[][][]) => {
-                    resolve(data);
-                };
-            });
-
-            // Request an inference
-            worker.postMessage({
-                type: 'INFERENCE_REQUEST',
-                id: inferenceID,
-                modelID: this.nnModel,
-                inputData,
-            });
-
-            // Get the inference result
-            let inferenceResult = await inferencePromise;
+            // Evaluate the input from the NN
+            let inferenceResult = await this.nnet.evaluateBatch(inputData);
             let valueResult = inferenceResult[0];
             let policyResult = inferenceResult[1];
 
             // Pass the data to anyone waiting for it
-            for(let i = 0; i < numPendingCalculations; i++) {
+            for(let i = 0; i < inputData.length; i++) {
                 resolutionCalls[i]([
                     valueResult[i],
                     policyResult[i],
@@ -181,5 +226,6 @@ class NNBatcher {
 
 export {
     NN,
+    NNTrainingData,
     NNBatcher,
 };
