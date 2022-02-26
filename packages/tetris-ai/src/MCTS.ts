@@ -11,6 +11,11 @@ interface MCTSArgs {
     gamma: number,
     // 0.0-infinity, temperature
     temperature: number,
+    // cPuct parameters
+    cPuctInit: number,
+    cPuctBase: number,
+    // Whether or not to use Dirichlet Noise
+    noise?: boolean,
 };
 
 interface MCTSTrainingData {
@@ -94,7 +99,7 @@ class MCTS {
         this.immediateRewards = [];
     }
 
-    async simulate(cPuctInit: number, cPuctBase: number) {
+    async simulate() {
         // Simulate a MCTS path
         let currentNode = this.rootNode;
 
@@ -135,7 +140,7 @@ class MCTS {
                     let numParentVisits = currentNode.numVisits + currentNode.numVisitingThreads;
                     let numChildVisits = childChanceNode.numVisits + childChanceNode.numVisitingThreads;
                     // cPuct, from Init and Base
-                    let cPuct = cPuctInit + Math.log( 1.0 + numParentVisits / cPuctBase );
+                    let cPuct = this.args.cPuctInit + Math.log( 1.0 + numParentVisits / this.args.cPuctBase );
                     // Q(s, a) = Average value of the chance node
                     // For virtual loss (vl), we presume we visited the child, but got a value of 0 from the search
                     // Q_vl(s, a) = Q(s, a) * childChanceNode.numVisits / (childChanceNode.numVisits + childChanceNode.numVisitingThreads)
@@ -362,10 +367,6 @@ class MCTS {
     }
 
     async iterate() {
-        const cPuctInit = 1.25; // Training
-        const cPuctBase = 18000;
-        // const cPuctInit = 2.4; // MatchPlay
-
         if (this.rootNode.isFinalState) {
             throw new Error("Tried to iterate a completed MCTS!");
         }
@@ -377,14 +378,17 @@ class MCTS {
         // Make sure the rootNode has been visited at least once,
         // So that its childrens' data is initialized
         if (this.rootNode.numVisits == 0) {
-            await this.simulate(cPuctInit, cPuctBase);
+            await this.simulate();
         }
 
         // Adjust the prior probabilities of the rootnode, using Dirichlet Noise
-        let numValidActions = this.rootNode.validActions.reduce((a, b) => a + (b ? 1.0 : 0.0), 0.0);
-        for(let i = 0; i < this.game.getNumActions(); i++) {
-            if (this.rootNode.validActions[i]) {
-                this.rootNode.priorPolicy[i] = 0.75 * this.rootNode.priorPolicy[i] + 0.25 * (1.0 / numValidActions);
+        if (this.args.noise) {
+            // Dirichlet(infinity) is what's used here, for now
+            let numValidActions = this.rootNode.validActions.reduce((a, b) => a + (b ? 1.0 : 0.0), 0.0);
+            for(let i = 0; i < this.game.getNumActions(); i++) {
+                if (this.rootNode.validActions[i]) {
+                    this.rootNode.priorPolicy[i] = 0.75 * this.rootNode.priorPolicy[i] + 0.25 * (1.0 / numValidActions);
+                }
             }
         }
 
@@ -402,7 +406,7 @@ class MCTS {
                     // While there's still simulations to do, simulate
                     while(this.rootNode.numVisits + numSims < this.args.numMCTSSims) {
                         numSims++;
-                        await this.simulate(cPuctInit, cPuctBase);
+                        await this.simulate();
                     }
                     // Once we're done, resolve the promise
                     resolve();

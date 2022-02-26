@@ -149,6 +149,7 @@ class NNBatcher {
     // NN
     nnet: NN;
     // Pending inputs, callbacks, and result promises
+    numPendingBatches: number;
     pendingNNInput: (number[][][])[];
     pendingResolutionCalls: ((_: number[][]) => void)[];
     pendingNNResults: Promise<number[][]>[];
@@ -157,6 +158,7 @@ class NNBatcher {
         this.nnet = nnet;
         this.batchSize = batchSize;
         this.latencyMS = latencyMS;
+        this.numPendingBatches = 0;
 
         this.resetPendingBatch();
     }
@@ -200,6 +202,7 @@ class NNBatcher {
 
     // Dispatch the NN calculation, and clear anything pending
     dispatchNNCalculation() {
+        this.numPendingBatches++;
         // Dispatch the pending NN calculations
         (async (inputData: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
             if (inputData.length == 0) {
@@ -218,10 +221,16 @@ class NNBatcher {
                     policyResult[i],
                 ]);
             }
+
+            this.numPendingBatches--;
         })(this.pendingNNInput, this.pendingResolutionCalls);
         // Reset the pending batch to start accepting new pending requests
         this.resetPendingBatch();
     };
+
+    getNumPendingBatches() {
+        return this.numPendingBatches;
+    }
 }
 
 export {
