@@ -1,10 +1,10 @@
 import { MCTS, MCTSArgs, MCTSTrainingData } from "./MCTS";
-import { NN, NNTrainingData, NNBatcher } from "./NN";
+import { NN, NNTrainingData } from "./NN";
 import { AbstractGame, GameInputTensor } from "./AbstractGame";
 import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
 import promptSync from 'prompt-sync';
 
-let runGames = async (game: AbstractGame, gamesPerGeneration: number, maxSimulGames: number, maxTurns: number, getNNResult: (inputTensor: GameInputTensor) => Promise<number[][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
+let runGames = async (game: AbstractGame, gamesPerGeneration: number, maxSimulGames: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
     let trainingData: MCTSTrainingData[][] = [];
 
     // Loop until GAMES_PER_GENERATION games have been played
@@ -23,10 +23,10 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, maxSimulGa
         // Keep evaluating the MCTS's
         while(true) {
             // Accumulate pending evaluations
-            let allPendingEvaluations = simultaneousMCTSs.map(() => null);
+            let allPendingEvaluations: GameInputTensor[][] = simultaneousMCTSs.map(() => null);
             for(let i = 0; i < simultaneousMCTSs.length; i++) {
                 let mcts = simultaneousMCTSs[i];
-                let desiredEvals = [];
+                let desiredEvals: GameInputTensor[] = [];
                 while (desiredEvals.length == 0 && !mcts.isGameOver() && totalStepsMade[i] < maxTurns) {
                     desiredEvals = mcts.iterate();
                     // If the mcts doesn't want any further evaluations, sample a move
@@ -39,16 +39,17 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, maxSimulGa
             }
 
             // Evaluate them
-            let flattenedEvaluationResults = await Promise.all(allPendingEvaluations.flat().map(nnInput => getNNResult(nnInput)));
-            if (flattenedEvaluationResults.length == 0) {
+            let desiredEvals = allPendingEvaluations.flat();
+            if (desiredEvals.length == 0) {
                 break;
             }
+            let nnResults = await getNNResults(desiredEvals);
 
             // Pass the evaluations to the MCTS's
             for(let i = simultaneousMCTSs.length - 1; i >= 0; i--) {
                 let numNeededEvaluations = allPendingEvaluations[i].length;
                 if (numNeededEvaluations > 0) {
-                    let evaluationResults = flattenedEvaluationResults.splice(flattenedEvaluationResults.length - numNeededEvaluations, numNeededEvaluations);
+                    let evaluationResults = nnResults.splice(nnResults.length - numNeededEvaluations, numNeededEvaluations);
                     simultaneousMCTSs[i].commitNNResults(evaluationResults);
                 }
             }
@@ -72,8 +73,7 @@ setTimeout(async () => {
     // Create the neural network
     let fallingStarNN = new NN(initInputTensor, fallingStarGame.getNumActions());
     // Warm the model
-    let initOutputBatch = await fallingStarNN.evaluateBatch([initInputTensor]);
-    let initOutputTensor = [initOutputBatch[0][0], initOutputBatch[1][0]];
+    let initOutputTensor = (await fallingStarNN.evaluateBatch([initInputTensor]))[0];
     initOutputTensor[0][0] = 1/3;
 
     // ===================
@@ -82,8 +82,6 @@ setTimeout(async () => {
 
     // Size of NN evaluation batches
     const BATCH_SIZE = 128;
-    // Create the NN Batcher
-    let nnBatcher = new NNBatcher(fallingStarNN, BATCH_SIZE, 5.0);
 
     // ===================
     // Generation parameters
@@ -129,17 +127,19 @@ setTimeout(async () => {
     let generationTrainingData = [];
     for(let generation = 0; generation <= NUM_GENERATIONS; generation++) {
         let numEvaluations = 0;
-        let getNNResult = async (inputTensor: GameInputTensor): Promise<number[][]> => {
+        let lastNumEvaluationsPrint = 0;
+        let getNNResults = async (inputTensor: GameInputTensor[]): Promise<number[][][]> => {
             // Await on the calculation to finish
-            numEvaluations++;
-            if (numEvaluations % 15000 == 0) {
+            if (Math.floor(numEvaluations/15000) > Math.floor(lastNumEvaluationsPrint/15000)) {
                 console.log("%d Evaluations (%dms per eval)", numEvaluations, ((performance.now() - startTime) / numEvaluations).toPrecision(3));
+                lastNumEvaluationsPrint = numEvaluations;
             }
+            numEvaluations += inputTensor.length;
             if (generation == 0) {
                 // On the 0th evaluation, all outputs will be approximately the same anyway
-                return initOutputTensor;
+                return inputTensor.map(() => initOutputTensor);
             } else {
-                return await nnBatcher.getNNResult(inputTensor);
+                return await fallingStarNN.evaluateBatch(inputTensor, BATCH_SIZE);
             }
         };
 
@@ -153,7 +153,7 @@ setTimeout(async () => {
         let startTime = performance.now();
 
         // Accumulate the training data
-        let trainingData = await runGames(fallingStarGame, GAMES_PER_GENERATION, MAX_SIMULTANEOUS_GAMES, MAX_MCTS_TURNS, getNNResult, {
+        let trainingData = await runGames(fallingStarGame, GAMES_PER_GENERATION, MAX_SIMULTANEOUS_GAMES, MAX_MCTS_TURNS, getNNResults, {
             numMCTSSims: MCTS_SIMULATIONS,
             numParallelSims: MCTS_BATCH_SIZE,
             gamma: 0.98,
@@ -203,8 +203,7 @@ setTimeout(async () => {
         console.log("Value MSE Loss: %d", loss[0].toFixed(5));
         console.log("Policy Cross-Entropy Loss: %d\n", loss[1].toFixed(5));
 
-        let generationOutputBatch = await fallingStarNN.evaluateBatch([initInputTensor]);
-        let generationOutputTensor = [generationOutputBatch[0][0], generationOutputBatch[1][0]];
+        let generationOutputTensor = (await fallingStarNN.evaluateBatch([initInputTensor]))[0];
         console.log("Output from initial state: ", generationOutputTensor, "\n");
 
         // ===============
@@ -212,7 +211,7 @@ setTimeout(async () => {
         // ===============
 
         // Run evaluation games
-        let evaluationTrainingData = await runGames(fallingStarGame, NUM_EVALUATION_GAMES, NUM_EVALUATION_GAMES, EVALUATION_MAX_MCTS_TURNS, getNNResult, {
+        let evaluationTrainingData = await runGames(fallingStarGame, NUM_EVALUATION_GAMES, NUM_EVALUATION_GAMES, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
             numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
             numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
             gamma: 0.98,

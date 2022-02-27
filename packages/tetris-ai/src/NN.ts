@@ -80,7 +80,7 @@ class NN {
         throw new Error("Int8 not implemented yet with WebWorkers");
     }
 
-    async evaluateBatch(inputData: (number[][][])[]): Promise<(number[][])[]> {
+    async evaluateBatch(inputData: (number[][][])[], batchSize?: number): Promise<(number[][])[]> {
         // Make sure the model exists first
         await this.getNNModel();
 
@@ -98,6 +98,7 @@ class NN {
             id: inferenceID,
             modelID: this.modelID,
             inputData: inputData,
+            batchSize: batchSize || inputData.length,
         });
 
         // Get the inference result
@@ -140,101 +141,7 @@ class NN {
     }
 };
 
-class NNBatcher {
-    // How many requests to accumulate in each batch
-    batchSize: number;
-    // Max amount of time to wait before dispatching,
-    // even if the batch size isn't full yet
-    latencyMS: number;
-    // NN
-    nnet: NN;
-    // Pending inputs, callbacks, and result promises
-    numPendingBatches: number;
-    pendingNNInput: (number[][][])[];
-    pendingResolutionCalls: ((_: number[][]) => void)[];
-    pendingNNResults: Promise<number[][]>[];
-
-    constructor(nnet: NN, batchSize: number, latencyMS: number) {
-        this.nnet = nnet;
-        this.batchSize = batchSize;
-        this.latencyMS = latencyMS;
-        this.numPendingBatches = 0;
-
-        this.resetPendingBatch();
-    }
-
-    getNNResult(inputTensor: number[][][]): Promise<number[][]> {
-        // Push the input, and get the promise we'll be waiting for
-        let index = this.pendingNNInput.length;
-        this.pendingNNInput.push(inputTensor);
-        let promise = this.pendingNNResults[index];
-        // If this is the first, set a latency timeout to trigger the dispatch eventually
-        if (this.pendingNNInput.length == 1) {
-            let prevNNPendingInput = this.pendingNNInput;
-            setTimeout(() => {
-                // Assuming it's still waiting on the same input,
-                // then it's been too long, so dispatch the calculation out
-                if (this.pendingNNInput == prevNNPendingInput) {
-                    this.dispatchNNCalculation();
-                }
-            }, this.latencyMS);
-        }
-        // Once the batch is full, dispatch it
-        if (this.pendingNNInput.length == this.batchSize) {
-            this.dispatchNNCalculation();
-        }
-        return promise;
-    }
-
-    // Reset the batch to be pending new awaits
-    resetPendingBatch() {
-        this.pendingResolutionCalls = [];
-        this.pendingNNResults = [];
-        this.pendingNNInput = [];
-        for(let i = 0; i < this.batchSize; i++) {
-            // Push the resolve callback, and the promise itself, to the pending list
-            let promise = new Promise<number[][]>((resolve, reject) => {
-                this.pendingResolutionCalls.push(resolve);
-            });
-            this.pendingNNResults.push(promise);
-        }
-    };
-
-    // Dispatch the NN calculation, and clear anything pending
-    dispatchNNCalculation() {
-        this.numPendingBatches++;
-        // Dispatch the pending NN calculations
-        (async (inputData: (number[][][])[], resolutionCalls: ((_: number[][]) => void)[]) => {
-            if (inputData.length == 0) {
-                throw new Error("The batch is empty!");
-            }
-
-            // Evaluate the input from the NN
-            let inferenceResult = await this.nnet.evaluateBatch(inputData);
-            let valueResult = inferenceResult[0];
-            let policyResult = inferenceResult[1];
-
-            // Pass the data to anyone waiting for it
-            for(let i = 0; i < inputData.length; i++) {
-                resolutionCalls[i]([
-                    valueResult[i],
-                    policyResult[i],
-                ]);
-            }
-
-            this.numPendingBatches--;
-        })(this.pendingNNInput, this.pendingResolutionCalls);
-        // Reset the pending batch to start accepting new pending requests
-        this.resetPendingBatch();
-    };
-
-    getNumPendingBatches() {
-        return this.numPendingBatches;
-    }
-}
-
 export {
     NN,
     NNTrainingData,
-    NNBatcher,
 };

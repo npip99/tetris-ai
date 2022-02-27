@@ -198,6 +198,7 @@ addEventListener('message', async e => {
         });
     } else if (data.type == 'INFERENCE_REQUEST') {
         let nnInput = data.inputData as number[][][][];
+        let batchSize = data.batchSize as number;
         let model = models[data.modelID as number];
         let inferenceID = data.id as number;
 
@@ -206,13 +207,22 @@ addEventListener('message', async e => {
 
         // Calculate the result, using a batch-size of the entire array
         let resultTensor: tf.Tensor2D[] = model.predict(batchedInputTensor, {
-            'batchSize': nnInput.length,
+            'batchSize': batchSize,
         }) as tf.Tensor2D[];
 
-        // Gather the results
+        // Await the results
         let results = await Promise.all(
             resultTensor.map(a => a.array()),
         );
+
+        // Organize them
+        let organizedResults = [];
+        for(let i = 0; i < nnInput.length; i++) {
+            organizedResults.push([
+                results[0][i],
+                results[1][i],
+            ]);
+        }
 
         // Free the tensors from the computation
         tf.dispose(batchedInputTensor);
@@ -222,7 +232,7 @@ addEventListener('message', async e => {
         postMessage({
             type: 'INFERENCE_RESPONSE',
             id: inferenceID,
-            resultData: results,
+            resultData: organizedResults,
         });
     } else if (data.type == 'TRAIN_REQUEST') {
         interface NNTrainingData {
