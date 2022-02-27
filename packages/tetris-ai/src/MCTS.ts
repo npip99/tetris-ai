@@ -72,20 +72,35 @@ class ChanceNode {
     childNodes: Node[];
 }
 
-type getNNResultLambda = (_: GameInputTensor) => Promise<number[][]>;
+type Path = any[];
+
+interface pendingSimulation {
+    pendingNode: Node;
+    path: Path; // (Node, ActionNumber, ChanceNumber)
+    // null if blocked by another thread
+    tensorInput: GameInputTensor;
+};
 
 class MCTS {
     game: AbstractGame;
     rootNode: Node;
+    numMovesMade: number;
     decisionPath: Node[];
-    getNNetResult: getNNResultLambda;
     args: MCTSArgs;
+
     // Training Data
     trainingData: MCTSTrainingData[];
-    // Immediate Rewards during iterations
+    // Immediate Rewards during iterations, to calculate training data Z's
     immediateRewards: (number | null)[];
 
-    constructor(game: AbstractGame, rootGameState: GameState, getNNetResult: getNNResultLambda, args: MCTSArgs) {
+    // Whether or not the rootnode has been initialized yet
+    initializedRootNode: boolean;
+    // Any pending simulations that are waiting to be cleared
+    pendingSimulations: pendingSimulation[];
+    // Paths of simulations that got blocked
+    pendingBlockedPaths: Path[];
+
+    constructor(game: AbstractGame, rootGameState: GameState, args: MCTSArgs) {
         this.args = {...args};
         if (this.args.numParallelSims == undefined) {
             this.args.numParallelSims = 1;
@@ -93,24 +108,29 @@ class MCTS {
 
         this.game = game;
         this.rootNode = new Node(rootGameState, 0.0, this.game.getGameEnded(rootGameState));
+        this.numMovesMade = 0;
         //this.decisionPath = [this.rootNode];
-        this.getNNetResult = getNNetResult;
         this.trainingData = [];
         this.immediateRewards = [];
+
+        this.initializedRootNode = false;
+        this.pendingSimulations = [];
+        this.pendingBlockedPaths = [];
     }
 
     async simulate() {
         // Simulate a MCTS path
         let currentNode = this.rootNode;
-
-        // (Node, ActionNumber)
         let path = [];
 
         // While we're not on a leaf node,
         while(currentNode.numVisits + currentNode.numVisitingThreads > 0 && !currentNode.isFinalState) {
             // We're waiting on numVisitingThreads to finish visiting that node
             if (currentNode.numVisits == 0) {
-                await currentNode.expandingPromise;
+                // This node is being simulated by someone else,
+                // So just mark the path to be cleared later
+                this.pendingBlockedPaths.push(path);
+                return;
             }
 
             // ================
@@ -212,12 +232,21 @@ class MCTS {
         }
         // Mark us as using that node right now
         currentNode.numVisitingThreads++;
-        // Create a promise that gets resolved when we're done visiting the node
-        let pendingResolution: () => void;
-        currentNode.expandingPromise = new Promise<void>((resolve, reject) => {
-            pendingResolution = resolve;
-        });
 
+        // If it's a final state, we can just finish right now
+        if (currentNode.isFinalState) {
+            this.finishSimulation(currentNode, path, null);
+        } else {
+            // Otherwise, the simulation is now pending backpropagation
+            this.pendingSimulations.push({
+                pendingNode: currentNode,
+                path: path,
+                tensorInput: currentNode.gameState.toTensor(),
+            });
+        }
+    }
+
+    finishSimulation(currentNode: Node, path: any[], outputResult: number[][] | null) {
         // ================
         // Expand the leaf
         // ================
@@ -228,9 +257,6 @@ class MCTS {
         if (currentNode.isFinalState) {
             expectedValue = 0.0;
         } else {
-            // Query the Neural Network
-            let inputTensor: GameInputTensor = currentNode.gameState.toTensor();
-            let outputResult = await this.getNNetResult(inputTensor);
             let NNValue = outputResult[0][0];
             let NNPriors = outputResult[1];
 
@@ -357,16 +383,13 @@ class MCTS {
             prevNode.numVisits = newNodeN;
             prevNode.numVisitingThreads--;
         }
-
-        // Mark the node a resolved
-        pendingResolution();
     }
 
     isGameOver() {
         return this.rootNode.isFinalState;
     }
 
-    async iterate() {
+    iterate(): GameInputTensor[] {
         if (this.rootNode.isFinalState) {
             throw new Error("Tried to iterate a completed MCTS!");
         }
@@ -375,49 +398,80 @@ class MCTS {
         // Adjust PriorPolicy of the Root Node
         // ==============
 
-        // Make sure the rootNode has been visited at least once,
-        // So that its childrens' data is initialized
-        if (this.rootNode.numVisits == 0) {
-            await this.simulate();
-        }
+        if (!this.initializedRootNode) {
+            // Make sure the rootNode has been visited at least once,
+            // So that its childrens' data is initialized
+            if (this.rootNode.numVisits == 0) {
+                this.simulate();
+                return this.pendingSimulations.map(value => value.tensorInput);
+            }
 
-        // Adjust the prior probabilities of the rootnode, using Dirichlet Noise
-        if (this.args.noise) {
-            // Dirichlet(infinity) is what's used here, for now
-            let numValidActions = this.rootNode.validActions.reduce((a, b) => a + (b ? 1.0 : 0.0), 0.0);
-            for(let i = 0; i < this.game.getNumActions(); i++) {
-                if (this.rootNode.validActions[i]) {
-                    this.rootNode.priorPolicy[i] = 0.75 * this.rootNode.priorPolicy[i] + 0.25 * (1.0 / numValidActions);
+            // Adjust the prior probabilities of the rootnode, using Dirichlet Noise
+            if (this.args.noise) {
+                // Dirichlet(infinity) is what's used here, for now
+                let numValidActions = this.rootNode.validActions.reduce((a, b) => a + (b ? 1.0 : 0.0), 0.0);
+                let dirichletNoise = this.rootNode.priorPolicy.filter((_, i) => this.rootNode.validActions[i]).map(() => 1.0 / numValidActions);
+
+                let dirichletNoiseIndex = 0;
+                for(let i = 0; i < this.game.getNumActions(); i++) {
+                    if (this.rootNode.validActions[i]) {
+                        this.rootNode.priorPolicy[i] = 0.75 * this.rootNode.priorPolicy[i] + 0.25 * dirichletNoise[dirichletNoiseIndex];
+                        dirichletNoiseIndex++;
+                    }
                 }
             }
+
+            // Mark as initialized
+            this.initializedRootNode = true;
         }
 
         // ==============
         // Run a set number of simulations
         // ==============
 
-        // Run numParallelSims simulations in parallel,
-        // With the plan to run numMCTSSims simulations total
-        let parallelSimPromises = [];
-        let numSims = 0;
-        for(let i = 0; i < this.args.numParallelSims; i++) {
-            parallelSimPromises.push(new Promise<void>((resolve, reject) => {
-                (async () => {
-                    // While there's still simulations to do, simulate
-                    while(this.rootNode.numVisits + numSims < this.args.numMCTSSims) {
-                        numSims++;
-                        await this.simulate();
-                    }
-                    // Once we're done, resolve the promise
-                    resolve();
-                })();
-            }));
+        // Run numParallelSims simulations in parallel, up to numMCTSSims on the root node
+        for(let i = 0; i < this.args.numParallelSims && this.rootNode.numVisits + this.pendingSimulations.length < this.args.numMCTSSims; i++) {
+            this.simulate();
         }
-        // Wait for all the promises to resolve
-        await Promise.all(parallelSimPromises);
+
+        // Return the TensorInputs we're waiting on
+        return this.pendingSimulations.map(value => value.tensorInput);
+    }
+
+    // Called with the results from the previous iterate call
+    commitNNResults(nnResultList: number[][][]) {
+        if (this.pendingSimulations.length != nnResultList.length) {
+            throw new Error("Tried to commit the incorrect number of evaluations!");
+        }
+        // Finish all the simulations, using the NN Results
+        for(let i = 0; i < this.pendingSimulations.length; i++) {
+            let nnResult = nnResultList[i];
+            this.finishSimulation(this.pendingSimulations[i].pendingNode, this.pendingSimulations[i].path, nnResult);
+        }
+        this.pendingSimulations = [];
+        // Clear the visiting thread count from blocked paths
+        for(let i = 0; i < this.pendingBlockedPaths.length; i++) {
+            let path = this.pendingBlockedPaths[i];
+            while(path.length > 0) {
+                let prevNodeActionSample = path.pop();
+                let prevNode = prevNodeActionSample[0] as Node;
+                let prevAction = prevNodeActionSample[1] as number;
+                let prevChanceNode = prevNode.children[prevAction];
+                prevNode.numVisitingThreads--;
+                prevChanceNode.numVisitingThreads--;
+            }
+        }
+        this.pendingBlockedPaths = [];
     }
     
+    // Sample a move, can only be used when this.iterate returns []
     sampleMove() {
+        if (this.initializedRootNode == false) {
+            throw new Error("The root not hasn't been initialized yet!");
+        }
+        if (this.pendingSimulations.length != 0) {
+            throw new Error("Simulations were still pending!");
+        }
         // ==============
         // Sample the probability distribution to get the next action
         // ==============
@@ -526,6 +580,8 @@ class MCTS {
 
         // Set the rootNode to this new Node
         this.rootNode = chosenChanceNode.childNodes[chosenSample];
+        // Mark that this new rootnode hasn't been initialized yet
+        this.initializedRootNode = false;
     }
 
     getTrainingData(): MCTSTrainingData[] {
@@ -706,5 +762,6 @@ class MCTS {
 
 export {
     MCTS,
+    MCTSArgs,
     MCTSTrainingData,
 };

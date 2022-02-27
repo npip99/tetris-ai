@@ -1,8 +1,66 @@
-import { MCTS, MCTSTrainingData } from "./MCTS";
+import { MCTS, MCTSArgs, MCTSTrainingData } from "./MCTS";
 import { NN, NNTrainingData, NNBatcher } from "./NN";
-import { GameInputTensor } from "./AbstractGame";
+import { AbstractGame, GameInputTensor } from "./AbstractGame";
 import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
 import promptSync from 'prompt-sync';
+
+let runGames = async (game: AbstractGame, gamesPerGeneration: number, maxSimulGames: number, maxTurns: number, getNNResult: (inputTensor: GameInputTensor) => Promise<number[][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
+    let trainingData: MCTSTrainingData[][] = [];
+
+    // Loop until GAMES_PER_GENERATION games have been played
+    let numGamesPlayed = 0;
+    while(numGamesPlayed < gamesPerGeneration) {
+        // Create all the simultaneous MCTS's
+        let simultaneousMCTSs: MCTS[] = [];
+        let totalStepsMade: number[] = [];
+        for(let i = 0; i < Math.min(gamesPerGeneration - numGamesPlayed, maxSimulGames); i++) {
+            let fallingStarInitState = game.getInitialState();
+            let fallingStarMCTS = new MCTS(game, fallingStarInitState, mctsArgs);
+            simultaneousMCTSs.push(fallingStarMCTS);
+            totalStepsMade.push(0);
+        }
+
+        // Keep evaluating the MCTS's
+        while(true) {
+            // Accumulate pending evaluations
+            let allPendingEvaluations = simultaneousMCTSs.map(() => null);
+            for(let i = 0; i < simultaneousMCTSs.length; i++) {
+                let mcts = simultaneousMCTSs[i];
+                let desiredEvals = [];
+                while (desiredEvals.length == 0 && !mcts.isGameOver() && totalStepsMade[i] < maxTurns) {
+                    desiredEvals = mcts.iterate();
+                    // If the mcts doesn't want any further evaluations, sample a move
+                    if (desiredEvals.length == 0) {
+                        mcts.sampleMove();
+                        totalStepsMade[i]++;
+                    }
+                }
+                allPendingEvaluations[i] = desiredEvals;
+            }
+
+            // Evaluate them
+            let flattenedEvaluationResults = await Promise.all(allPendingEvaluations.flat().map(nnInput => getNNResult(nnInput)));
+            if (flattenedEvaluationResults.length == 0) {
+                break;
+            }
+
+            // Pass the evaluations to the MCTS's
+            for(let i = simultaneousMCTSs.length - 1; i >= 0; i--) {
+                let numNeededEvaluations = allPendingEvaluations[i].length;
+                if (numNeededEvaluations > 0) {
+                    let evaluationResults = flattenedEvaluationResults.splice(flattenedEvaluationResults.length - numNeededEvaluations, numNeededEvaluations);
+                    simultaneousMCTSs[i].commitNNResults(evaluationResults);
+                }
+            }
+        }
+
+        // Accumulate the training data
+        trainingData = trainingData.concat(trainingData, simultaneousMCTSs.map(mcts => mcts.getTrainingData()));
+        numGamesPlayed += simultaneousMCTSs.length;
+    }
+
+    return trainingData;
+}
 
 setTimeout(async () => {
     const prompt = promptSync({sigint: true});
@@ -89,49 +147,23 @@ setTimeout(async () => {
         // Play Games for training data
         // ===============
 
-        console.log("=============\n");
+        console.log("=============\n=============\n");
         console.log("Beginning Generation %d\n", generation);
 
         let startTime = performance.now();
-        let trainingData: MCTSTrainingData[] = [];
 
-        // Loop until GAMES_PER_GENERATION games have been played
-        let numGamesPlayed = 0;
-        while(numGamesPlayed < GAMES_PER_GENERATION) {
-            // Loop for all of the games happening simultaneously
-            let MCTSPromises: Promise<void>[] = [];
-            for(let i = 0; i < Math.min(GAMES_PER_GENERATION - numGamesPlayed, MAX_SIMULTANEOUS_GAMES); i++) {
-                MCTSPromises.push((async () => {
-                    let fallingStarInitState = fallingStarGame.getInitialState();
-    
-                    // Run a MCTS from the initial state
-                    let fallingStarMCTS = new MCTS(fallingStarGame, fallingStarInitState, getNNResult, {
-                        numMCTSSims: MCTS_SIMULATIONS,
-                        numParallelSims: MCTS_BATCH_SIZE,
-                        gamma: 0.98,
-                        // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-                        temperature: 1.0,
-                        // 1.25 for training, 2.5 for match play
-                        cPuctInit: 1.25,
-                        cPuctBase: 18000,
-                        noise: true,
-                    });
-    
-                    // Run several steps of the simulation
-                    for(let step = 0; step < MAX_MCTS_TURNS && !fallingStarMCTS.isGameOver(); step++) {
-                        await fallingStarMCTS.iterate();
-                        fallingStarMCTS.sampleMove();
-                    }
-    
-                    // Accumulate the training data
-                    trainingData = trainingData.concat(fallingStarMCTS.getTrainingData());
-                })());
-            }
-    
-            // Wait for them all to finish
-            await Promise.all(MCTSPromises);
-            numGamesPlayed += MCTSPromises.length;
-        }
+        // Accumulate the training data
+        let trainingData = await runGames(fallingStarGame, GAMES_PER_GENERATION, MAX_SIMULTANEOUS_GAMES, MAX_MCTS_TURNS, getNNResult, {
+            numMCTSSims: MCTS_SIMULATIONS,
+            numParallelSims: MCTS_BATCH_SIZE,
+            gamma: 0.98,
+            // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
+            temperature: 1.0,
+            // 1.25 for training, 2.5 for match play
+            cPuctInit: 1.25,
+            cPuctBase: 18000,
+            noise: true,
+        });
 
         // Log time for this generation
         let totalTime = (performance.now() - startTime);
@@ -140,7 +172,7 @@ setTimeout(async () => {
 
         // Construct the NN training data from this generation
         let nnTrainingData: NNTrainingData[] = [];
-        for(let trainingDatum of trainingData) {
+        for(let trainingDatum of trainingData.flat()) {
             nnTrainingData.push({
                 input: trainingDatum.input,
                 output: [
@@ -179,38 +211,20 @@ setTimeout(async () => {
         // Evaluate the NN
         // ===============
 
-        let MCTSPromises: Promise<number>[] = [];
-        for(let i = 0; i < NUM_EVALUATION_GAMES; i++) {
-            MCTSPromises.push((async () => {
-                let fallingStarInitState = fallingStarGame.getInitialState();
+        // Run evaluation games
+        let evaluationTrainingData = await runGames(fallingStarGame, NUM_EVALUATION_GAMES, NUM_EVALUATION_GAMES, EVALUATION_MAX_MCTS_TURNS, getNNResult, {
+            numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
+            numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
+            gamma: 0.98,
+            // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
+            temperature: 0.0,
+            // 1.25 for training, 2.5 for match play
+            cPuctInit: 2.5,
+            cPuctBase: 18000,
+        });
 
-                // Run a MCTS from the initial state
-                let fallingStarMCTS = new MCTS(fallingStarGame, fallingStarInitState, getNNResult, {
-                    numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
-                    numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
-                    gamma: 0.98,
-                    // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-                    temperature: 0.0,
-                    // 1.25 for training, 2.5 for match play
-                    cPuctInit: 2.5,
-                    cPuctBase: 18000,
-                });
-
-                // Run several steps of the simulation
-                for(let step = 0; step < EVALUATION_MAX_MCTS_TURNS && !fallingStarMCTS.isGameOver(); step++) {
-                    await fallingStarMCTS.iterate();
-                    fallingStarMCTS.sampleMove();
-                }
-
-                let trainingData = fallingStarMCTS.getTrainingData();
-
-                // Accumulate the training data
-                return trainingData[0].actualValue;
-            })());
-        }
-
-        // Wait for them all to finish
-        let scores = await Promise.all(MCTSPromises);
+        // Print the evaluation score of the NN
+        let scores = evaluationTrainingData.map(trainingData => trainingData[0].actualValue);
         let averageScore = scores.reduce((acc, c) => acc + c, 0) / scores.length;
         let standardDeviation = Math.sqrt(scores.reduce((acc, c) => acc + Math.pow(c - averageScore, 2), 0) / scores.length);
         console.log("Average Score: %d (+/- %d)\n", averageScore.toFixed(3), standardDeviation.toFixed(2));
