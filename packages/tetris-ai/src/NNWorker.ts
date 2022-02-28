@@ -197,13 +197,14 @@ addEventListener('message', async e => {
             id: data.id,
         });
     } else if (data.type == 'INFERENCE_REQUEST') {
-        let nnInput = data.inputData as number[][][][];
+        let nnInput = data.inputData as Float32Array;
+        let nnInputShape = data.inputDataShape as number[];
         let batchSize = data.batchSize as number;
         let model = models[data.modelID as number];
         let inferenceID = data.id as number;
 
         // Setup the input tensor
-        let batchedInputTensor: tf.Tensor4D = tf.tensor4d(nnInput);
+        let batchedInputTensor: tf.Tensor4D = tf.tensor4d(nnInput, [nnInputShape[0], nnInputShape[1], nnInputShape[2], nnInputShape[3]]);
 
         // Calculate the result, using a batch-size of the entire array
         let resultTensor: tf.Tensor2D[] = model.predict(batchedInputTensor, {
@@ -217,7 +218,8 @@ addEventListener('message', async e => {
 
         // Organize them
         let organizedResults = [];
-        for(let i = 0; i < nnInput.length; i++) {
+        // nnInputShape[0] == numInputs
+        for(let i = 0; i < nnInputShape[0]; i++) {
             organizedResults.push([
                 results[0][i],
                 results[1][i],

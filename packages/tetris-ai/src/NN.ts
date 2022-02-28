@@ -92,14 +92,31 @@ class NN {
             };
         });
 
+        // Efficiently construct a TypedArray out of the inputData
+        let inputDataShape = [inputData.length, inputData[0].length, inputData[0][0].length, inputData[0][0][0].length];
+        let internalBuffer = new ArrayBuffer(4 * inputDataShape[0] * inputDataShape[1] * inputDataShape[2] * inputDataShape[3]);
+        let inputDataTypedArray = new Float32Array(internalBuffer);
+        let offset = 0;
+        for(let i = 0; i < inputDataShape[0]; i++) {
+            for(let j = 0; j < inputDataShape[1]; j++) {
+                for(let k = 0; k < inputDataShape[2]; k++) {
+                    for(let m = 0; m < inputDataShape[3]; m++) {
+                        inputDataTypedArray[offset] = inputData[i][j][k][m];
+                        offset++;
+                    }
+                }
+            }
+        }
+
         // Request an inference
         worker.postMessage({
             type: 'INFERENCE_REQUEST',
             id: inferenceID,
             modelID: this.modelID,
-            inputData: inputData,
+            inputData: inputDataTypedArray,
+            inputDataShape: inputDataShape,
             batchSize: batchSize || inputData.length,
-        });
+        }, [internalBuffer]);
 
         // Get the inference result
         let inferenceResult = await inferencePromise;
