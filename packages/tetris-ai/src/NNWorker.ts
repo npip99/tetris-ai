@@ -213,18 +213,8 @@ addEventListener('message', async e => {
 
         // Await the results
         let results = await Promise.all(
-            resultTensor.map(a => a.array()),
+            resultTensor.map(a => a.data()),
         );
-
-        // Organize them
-        let organizedResults = [];
-        // nnInputShape[0] == numInputs
-        for(let i = 0; i < nnInputShape[0]; i++) {
-            organizedResults.push([
-                results[0][i],
-                results[1][i],
-            ]);
-        }
 
         // Free the tensors from the computation
         tf.dispose(batchedInputTensor);
@@ -234,8 +224,8 @@ addEventListener('message', async e => {
         postMessage({
             type: 'INFERENCE_RESPONSE',
             id: inferenceID,
-            resultData: organizedResults,
-        });
+            resultData: results,
+        }, undefined, results.map(arr => arr.buffer));
     } else if (data.type == 'TRAIN_REQUEST') {
         interface NNTrainingData {
             input: number[][][],

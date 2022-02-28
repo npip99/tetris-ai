@@ -17,7 +17,7 @@ type LossData = number[];
 let worker = null;
 let models: Record<TFModel, boolean> = {};
 let pendingModels: Record<TFModel, () => void> = {};
-let pendingInferences: Record<number, (_: number[][][]) => void> = {};
+let pendingInferences: Record<number, (_: Float32Array[]) => void> = {};
 let pendingTraining: Record<number, (_: LossData) => void> = {};
 
 function createWorker() {
@@ -86,8 +86,8 @@ class NN {
 
         // Setup a promise for the inference result
         let inferenceID = Math.floor(Math.random() * 2147483647);
-        let inferencePromise = new Promise<number[][][]>((resolve, reject) => {
-            pendingInferences[inferenceID] = (data: number[][][]) => {
+        let inferencePromise = new Promise<Float32Array[]>((resolve, reject) => {
+            pendingInferences[inferenceID] = (data: Float32Array[]) => {
                 resolve(data);
             };
         });
@@ -120,7 +120,27 @@ class NN {
 
         // Get the inference result
         let inferenceResult = await inferencePromise;
-        return inferenceResult;
+
+        // Number of inferences we requested / got back
+        let numInferences = inputData.length;
+        // Get the shape of each output, based of the total length of each output array
+        let shape = [];
+        for(let output_id = 0; output_id < inferenceResult.length; output_id++) {
+            // Divide total data points, by num of inferences, to get the number of floats per output, for this output_id
+            shape.push(inferenceResult[output_id].length / numInferences);
+        }
+
+        // Create an inference-by-inference organization of the output,
+        // By slicing into each output to get the data we want
+        let organizedResults = [];
+        for(let i = 0; i < numInferences; i++) {
+            organizedResults.push(shape.map((shapeSize, output_id) => {
+                return Array.prototype.slice.call(inferenceResult[output_id].subarray(i * shapeSize, i * shapeSize + shapeSize));
+            }));
+        }
+
+        // Return the organize results
+        return organizedResults;
     }
 
     async trainBatch(trainingData: NNTrainingData[], trainingBatchSize: number, numEpochs: number): Promise<LossData> {
