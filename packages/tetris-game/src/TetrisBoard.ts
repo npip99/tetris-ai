@@ -38,11 +38,25 @@ class TetrisBoard {
     board: Uint8Array;
     width: number;
     height: number;
+    isView: Boolean;
 
     constructor(width: number, height: number) {
+        if (width == -1) {
+            return;
+        }
         this.width = width;
         this.height = height;
         this.board = new Uint8Array(width * height);
+        this.isView = false;
+    }
+
+    clone(): TetrisBoard {
+        let ret = new TetrisBoard(-1, -1);
+        ret.width = this.width;
+        ret.height = this.height;
+        ret.board = new Uint8Array(this.board.buffer);
+        ret.isView = true;
+        return ret;
     }
 
     placePiece(piece: TetrisPiece) {
@@ -134,6 +148,10 @@ class TetrisBoard {
 
     // Access the board
     setSquare(x: number, y: number, id: number) {
+        if (this.isView) {
+            this.board = new Uint8Array(this.board);
+            this.isView = false;
+        }
         this.board[y * this.width + x] = id;
     }
 

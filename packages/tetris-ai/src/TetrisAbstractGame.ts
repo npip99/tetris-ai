@@ -155,32 +155,19 @@ class TetrisAbstractGame extends AbstractGame {
 
         // Rotate the piece
         for(let i = 0; i < tetrisAction.orientation; i++) {
-            // Press nothing
-            newState.nesTetrisGame.iterate();
             // Rotate CW the correct number of times
             if (tetrisAction.orientation == 3) {
                 // Quickskip for CCW
-                newState.nesTetrisGame.pressCCW();
-                newState.nesTetrisGame.iterate();
+                newState.nesTetrisGame.hardCCW();
                 break;
             }
-            newState.nesTetrisGame.pressCW();
-            newState.nesTetrisGame.iterate();
+            newState.nesTetrisGame.hardCW();
         }
 
         // Move the piece into place at 30Hz
         let tetrisPieceSpawnLocation = 5;
-        let movingLeft = tetrisAction.x < tetrisPieceSpawnLocation;
-        for(let i = 0; i < Math.abs(tetrisAction.x - tetrisPieceSpawnLocation); i++) {
-            // Press nothing
-            newState.nesTetrisGame.iterate();
-            // Press left/right
-            if (movingLeft) {
-                newState.nesTetrisGame.pressLeft();
-            } else {
-                newState.nesTetrisGame.pressRight();
-            }
-            newState.nesTetrisGame.iterate();
+        if (tetrisAction.x != tetrisPieceSpawnLocation) {
+            newState.nesTetrisGame.board.tryMovePiece(newState.nesTetrisGame.current_piece, tetrisAction.x - tetrisPieceSpawnLocation, 0);
         }
 
         // Now hard-drop

@@ -193,12 +193,7 @@ class NESTetrisGame {
     clone(): NESTetrisGame {
         let ret = new NESTetrisGame(-1);
         // Board
-        ret.board = new TetrisBoard(this.width, this.height);
-        for(let y = 0; y < this.height; y++) {
-            for(let x = 0; x < this.width; x++) {
-                ret.board.setSquare(x, y, this.board.getSquare(x, y));
-            }
-        }
+        ret.board = this.board.clone();
         // Pieces
         ret.current_piece = new TetrisPiece(this.current_piece.x, this.current_piece.y, this.current_piece.abstractTetrisPiece);
         ret.next_piece = new TetrisPiece(this.next_piece.x, this.next_piece.y, this.next_piece.abstractTetrisPiece);
@@ -213,22 +208,26 @@ class NESTetrisGame {
         // ARE Region of code
         ret.AREState = this.AREState;
         ret.is_animating = this.is_animating;
-        ret.frameCounter = this.frameCounter;
-        ret.vramRow = this.vramRow;
-        ret.vram = clone(this.vram);
-        ret.pendingAudio = this.pendingAudio;
-        ret.gameboardFlashing = this.gameboardFlashing;
-        // DAS
-        ret.dasHorizontal = this.dasHorizontal;
-        ret.dasVertical = this.dasVertical;
-        ret.pushdownPoints = this.pushdownPoints;
-        ret.fallTimer = this.fallTimer;
-        // Statistics
-        ret.pieceCount = clone(this.pieceCount);
-        ret.totalLinesCleared = this.totalLinesCleared;
-        // ButtonState
-        ret.buttonState = clone(this.buttonState);
-        ret.previousButtonState = clone(this.previousButtonState);
+        if (ret.is_animating) {
+            ret.frameCounter = this.frameCounter;
+            ret.vramRow = this.vramRow;
+            ret.vram = clone(this.vram);
+            ret.pendingAudio = this.pendingAudio;
+            ret.gameboardFlashing = this.gameboardFlashing;
+            // DAS
+            ret.dasHorizontal = this.dasHorizontal;
+            ret.dasVertical = this.dasVertical;
+            ret.pushdownPoints = this.pushdownPoints;
+            ret.fallTimer = this.fallTimer;
+            // Statistics
+            ret.totalLinesCleared = this.totalLinesCleared;
+            ret.pieceCount = [...this.pieceCount];
+            // ButtonState
+            ret.buttonState = {...this.buttonState};
+            ret.previousButtonState = this.previousButtonState;
+        } else {
+            ret.totalLinesCleared = this.totalLinesCleared;
+        }
         return ret;
     }
 
@@ -240,7 +239,7 @@ class NESTetrisGame {
         // Iterate the current/next pieces
         this.current_piece = this.next_piece;
         // Track statistics including this newly current piece
-        this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
+        this.pieceCount && this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
 
         // Return the distribution of valid next pieces
         return getRandomAbstractPieceDistribution(this.current_piece.abstractTetrisPiece.pieceID - 1);
@@ -258,7 +257,7 @@ class NESTetrisGame {
         // Iterate the current/next pieces
         this.current_piece = this.next_piece;
         // Track statistics including this newly current piece
-        this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
+        this.pieceCount && this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
 
         // Sample a random piece
         this.next_piece = new TetrisPiece(TETRIS_PIECE_SPAWN_LOCATION.x, TETRIS_PIECE_SPAWN_LOCATION.y, getRandomAbstractPiece(this.current_piece.abstractTetrisPiece.pieceID - 1));
@@ -524,6 +523,14 @@ class NESTetrisGame {
         this.handleDown(); // Might end the game, if the next piece has nowhere to go
     }
 
+    hardCCW() {
+        this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CCW);
+    }
+
+    hardCW() {
+        this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CW);
+    }
+
     // Harddrop, simulates many iterations until the drop,
     // And then returns the distribution of next pieces
     hardDrop() {
@@ -534,19 +541,8 @@ class NESTetrisGame {
 
         let distribution = null;
         while(true) {
-            this.buttonState = {
-                [Buttons.LEFT]: ButtonState.RELEASED,
-                [Buttons.RIGHT]: ButtonState.RELEASED,
-                [Buttons.DOWN]: ButtonState.PRESSED,
-                [Buttons.ROTATE_CCW]: ButtonState.RELEASED,
-                [Buttons.ROTATE_CW]: ButtonState.RELEASED,
-            };
-            this.frameCounter++;
-            this.fallTimer++;
-            this.pendingAudio = NESTetrisAudioType.NONE;
-            this.iterateGameLogic();
-            if (this.failedToDrop) {
-                this.failedToDrop = false;
+            let could_drop: Boolean = this.board.tryMovePiece(this.current_piece, 0, 1);
+            if (!could_drop) {
                 let canLockPiece = this.lockCurrentPiece();
                 if (!canLockPiece) {
                     this.game_over = true;
@@ -558,15 +554,7 @@ class NESTetrisGame {
                 }
                 break;
             }
-            this.previousButtonState = this.buttonState;
         }
-        this.buttonState = {
-            [Buttons.LEFT]: ButtonState.RELEASED,
-            [Buttons.RIGHT]: ButtonState.RELEASED,
-            [Buttons.DOWN]: ButtonState.RELEASED,
-            [Buttons.ROTATE_CCW]: ButtonState.RELEASED,
-            [Buttons.ROTATE_CW]: ButtonState.RELEASED,
-        };
         return distribution;
     }
 
