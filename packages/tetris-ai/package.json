@@ -13,12 +13,14 @@
     "@tensorflow/tfjs-node": "^3.13.0",
     "@tensorflow/tfjs-node-gpu": "^3.13.0",
     "canvas": "^2.9.0",
+    "clone": "^2.1.2",
     "prompt-sync": "^4.2.0",
     "pureimage": "^0.3.8",
     "tetris-game": "1.0.0",
     "web-worker": "^1.2.0"
   },
   "devDependencies": {
+    "@types/clone": "^2.1.1",
     "@types/prompt-sync": "^4.1.1"
   }
 }

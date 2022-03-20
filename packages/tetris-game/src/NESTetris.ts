@@ -1,5 +1,6 @@
 import { TetrisBoard, TetrisPiece, TetrisRotation } from "./TetrisBoard";
 import { TETRIS_PIECES } from "./TetrisPiece";
+import clone from 'clone';
 
 enum NESTetrisAudioType {
     NONE,
@@ -17,45 +18,69 @@ const TETRIS_PIECE_SPAWN_LOCATION = {
     x: 5,
 };
 
-function getRandomAbstractPiece(avoid_piece: number) {
-    // Get a random num from 0->7 inclusive
-    let firstAttempt = Math.floor(Math.random() * 8);
+function getRandomAbstractPieceDistribution(avoid_piece: number): number[] {
+    // First, a number from 0 to 7 inclusive is chosen
+    const FIRST_PROBABILITIES = [
+        1/8,
+        1/8,
+        1/8,
+        1/8,
+        1/8,
+        1/8,
+        1/8,
+        1/8, 
+    ];
 
-    // If we picked an invalid index (Either 7 or the piece we're trying to avoid),
-    if (firstAttempt == 7 || firstAttempt == avoid_piece) {
-        // Use this oddly biased sample distribution
-        const PROBABILITIES = [
-            9,
-            8,
-            8,
-            8,
-            9,
-            7,
-            7, 
-        ];
-        const TOTAL_CUMULATIVE_PROBABILITY = PROBABILITIES.reduce((a, b) => a + b, 0);
+    // If 7 or avoid_piece, sample a second time from this distribution
+    const SECOND_PROBABILITIES = [
+        9,
+        8,
+        8,
+        8,
+        9,
+        7,
+        7, 
+    ];
+    const CUMULATIVE_SECOND_PROBABILITIES = SECOND_PROBABILITIES.reduce((a, b) => a + b, 0);
 
-        // Get a random num within the total cumulative probability, exclusive on the right
-        let randomPieceNum = Math.floor(Math.random() * TOTAL_CUMULATIVE_PROBABILITY);
-
-        // Get the chosen piece and it's cumulative probability
-        let chosenPiece = 0;
-        let cumulativeProbability = PROBABILITIES[0];
-
-        // While randomPieceNum is not yet inside of the cumulative probability,
-        while(!(randomPieceNum < cumulativeProbability)) {
-            // Include the next chosen piece,
-            // to see if randomPieceNum will be within the now larger cumulative probability
-            chosenPiece += 1;
-            cumulativeProbability += PROBABILITIES[chosenPiece];
+    let finalProbabilities = new Array(7);
+    for(let i = 0; i < 7; i++) {
+        // Include the probability of selecting "i" from the first draw
+        if (i == avoid_piece) {
+            // Can't select the avoid_piece first
+            finalProbabilities[i] = 0.0;
+        } else {
+            finalProbabilities[i] = FIRST_PROBABILITIES[i];
         }
-
-        // Return the chosen piece
-        return TETRIS_PIECES[chosenPiece];
-    } else {
-        // Otherwise, return the first index
-        return TETRIS_PIECES[firstAttempt];
+        // Also include the odds of selecting "i" on the second draw
+        finalProbabilities[i] += (FIRST_PROBABILITIES[avoid_piece] + FIRST_PROBABILITIES[7]) * SECOND_PROBABILITIES[i] / CUMULATIVE_SECOND_PROBABILITIES;
     }
+
+    return finalProbabilities;
+}
+
+function getRandomAbstractPiece(avoid_piece: number) {
+    // Get the distribution of selecting the tetris pieces
+    let probabilities = getRandomAbstractPieceDistribution(avoid_piece);
+
+    // Get a random num within the total cumulative probability, exclusive on the right
+    let randomPieceSample = Math.random();
+
+    // Get the chosen piece and it's cumulative probability
+    let chosenPiece = 0;
+    let cumulativeProbability = probabilities[0];
+
+    // While randomPieceSample is not yet inside of the cumulative probability,
+    // Explicit check chosenPiece + 1 < 7, in-case cumulativeProbability doesn't quite add up to 1.0
+    while(!(randomPieceSample < cumulativeProbability) && chosenPiece + 1 < 7) {
+        // Include the next chosen piece,
+        // to see if randomPieceNum will be within the now larger cumulative probability
+        chosenPiece += 1;
+        cumulativeProbability += probabilities[chosenPiece];
+    }
+
+    // Return the chosen piece
+    return TETRIS_PIECES[chosenPiece];
 }
 
 enum ButtonState {
@@ -71,8 +96,6 @@ enum Buttons {
     ROTATE_CCW,
     ROTATE_CW,
 };
-
-const IS_ANIMATING = true;
 
 class NESTetrisGame {
     // The Tetris State
@@ -90,9 +113,10 @@ class NESTetrisGame {
     failedToDrop: Boolean;
     lastClearedLines: number;
     // Logic for ARE and precise rendering
+    AREState: number; // The AREState that we're in
+    is_animating: Boolean;
     frameCounter: number;
     pendingAudio: NESTetrisAudioType;
-    AREState: number; // The AREState that we're in
     AREAuxData: any; // An auxillary counter for tracking progression
     vram: number[][];
     vramRow: number;
@@ -111,7 +135,11 @@ class NESTetrisGame {
     buttonState: Record<Buttons, ButtonState>;
     previousButtonState: Record<Buttons, ButtonState>;
 
-    constructor(initial_level: number) {
+    constructor(initial_level: number, is_animating: Boolean = true) {
+        // Used to make an uninitialized NESTetris (see clone())
+        if (initial_level == -1) {
+            return;
+        }
         // NESTetris is 10x20
         this.board = new TetrisBoard(this.width, this.height);
         // Yes, the very first piece of the game slightly avoids index 0 (T-Piece).
@@ -122,10 +150,12 @@ class NESTetrisGame {
         this.initial_level = initial_level;
         this.level = this.initial_level;
         this.score = 0;
-        // ARE Region of code
+        // Temporary game state
         this.failedToDrop = false;
-        this.frameCounter = 0;
+        // ARE Region of code
         this.AREState = 1;
+        this.is_animating = is_animating;
+        this.frameCounter = 0;
         this.vramRow = 32;
         this.vram = Array(this.height);
         for(let y = 0; y < this.height; y++) {
@@ -160,16 +190,78 @@ class NESTetrisGame {
         this.previousButtonState = {...this.buttonState};
     }
 
-    spawnPiece() {
+    clone(): NESTetrisGame {
+        let ret = new NESTetrisGame(-1);
+        // Board
+        ret.board = new TetrisBoard(this.width, this.height);
+        for(let y = 0; y < this.height; y++) {
+            for(let x = 0; x < this.width; x++) {
+                ret.board.setSquare(x, y, this.board.getSquare(x, y));
+            }
+        }
+        // Pieces
+        ret.current_piece = new TetrisPiece(this.current_piece.x, this.current_piece.y, this.current_piece.abstractTetrisPiece);
+        ret.next_piece = new TetrisPiece(this.next_piece.x, this.next_piece.y, this.next_piece.abstractTetrisPiece);
+        // Game State
+        ret.game_over = this.game_over;
+        ret.initial_level = this.initial_level;
+        ret.level = this.level;
+        ret.score = this.score;
+        // Temporary game state
+        ret.failedToDrop = this.failedToDrop;
+        ret.lastClearedLines  = this.lastClearedLines;
+        // ARE Region of code
+        ret.AREState = this.AREState;
+        ret.is_animating = this.is_animating;
+        ret.frameCounter = this.frameCounter;
+        ret.vramRow = this.vramRow;
+        ret.vram = clone(this.vram);
+        ret.pendingAudio = this.pendingAudio;
+        ret.gameboardFlashing = this.gameboardFlashing;
+        // DAS
+        ret.dasHorizontal = this.dasHorizontal;
+        ret.dasVertical = this.dasVertical;
+        ret.pushdownPoints = this.pushdownPoints;
+        ret.fallTimer = this.fallTimer;
+        // Statistics
+        ret.pieceCount = clone(this.pieceCount);
+        ret.totalLinesCleared = this.totalLinesCleared;
+        // ButtonState
+        ret.buttonState = clone(this.buttonState);
+        ret.previousButtonState = clone(this.previousButtonState);
+        return ret;
+    }
+
+    spawnPieceDistribution() {
         // Reset some variables
         this.fallTimer = 0;
         this.dasVertical = 0;
 
         // Iterate the current/next pieces
         this.current_piece = this.next_piece;
-        this.next_piece = new TetrisPiece(TETRIS_PIECE_SPAWN_LOCATION.x, TETRIS_PIECE_SPAWN_LOCATION.y, getRandomAbstractPiece(this.current_piece.abstractTetrisPiece.pieceID - 1));
         // Track statistics including this newly current piece
         this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
+
+        // Return the distribution of valid next pieces
+        return getRandomAbstractPieceDistribution(this.current_piece.abstractTetrisPiece.pieceID - 1);
+    }
+
+    spawnParticularPiece(rawPieceID: number) {
+        this.next_piece = new TetrisPiece(TETRIS_PIECE_SPAWN_LOCATION.x, TETRIS_PIECE_SPAWN_LOCATION.y, TETRIS_PIECES[rawPieceID]);
+    }
+
+    spawnRandomizedPiece() {
+        // Reset some variables
+        this.fallTimer = 0;
+        this.dasVertical = 0;
+
+        // Iterate the current/next pieces
+        this.current_piece = this.next_piece;
+        // Track statistics including this newly current piece
+        this.pieceCount[this.current_piece.abstractTetrisPiece.pieceID - 1]++;
+
+        // Sample a random piece
+        this.next_piece = new TetrisPiece(TETRIS_PIECE_SPAWN_LOCATION.x, TETRIS_PIECE_SPAWN_LOCATION.y, getRandomAbstractPiece(this.current_piece.abstractTetrisPiece.pieceID - 1));
     }
 
     // Frames per automatic drop
@@ -432,6 +524,52 @@ class NESTetrisGame {
         this.handleDown(); // Might end the game, if the next piece has nowhere to go
     }
 
+    // Harddrop, simulates many iterations until the drop,
+    // And then returns the distribution of next pieces
+    hardDrop() {
+        // Do nothing if the game is over
+        if (this.game_over) {
+            return;
+        }
+
+        let distribution = null;
+        while(true) {
+            this.buttonState = {
+                [Buttons.LEFT]: ButtonState.RELEASED,
+                [Buttons.RIGHT]: ButtonState.RELEASED,
+                [Buttons.DOWN]: ButtonState.PRESSED,
+                [Buttons.ROTATE_CCW]: ButtonState.RELEASED,
+                [Buttons.ROTATE_CW]: ButtonState.RELEASED,
+            };
+            this.frameCounter++;
+            this.fallTimer++;
+            this.pendingAudio = NESTetrisAudioType.NONE;
+            this.iterateGameLogic();
+            if (this.failedToDrop) {
+                this.failedToDrop = false;
+                let canLockPiece = this.lockCurrentPiece();
+                if (!canLockPiece) {
+                    this.game_over = true;
+                } else {
+                    // Clear the lines, update the score, then spawn a new piece
+                    this.clearLines();
+                    this.updateScore();
+                    distribution = this.spawnPieceDistribution();
+                }
+                break;
+            }
+            this.previousButtonState = this.buttonState;
+        }
+        this.buttonState = {
+            [Buttons.LEFT]: ButtonState.RELEASED,
+            [Buttons.RIGHT]: ButtonState.RELEASED,
+            [Buttons.DOWN]: ButtonState.RELEASED,
+            [Buttons.ROTATE_CCW]: ButtonState.RELEASED,
+            [Buttons.ROTATE_CW]: ButtonState.RELEASED,
+        };
+        return distribution;
+    }
+
     iterate() {
         // The original NES also iterates the PRNG at this point
         this.frameCounter++;
@@ -451,7 +589,7 @@ class NESTetrisGame {
             if (this.failedToDrop) {
                 this.failedToDrop = false;
 
-                if (IS_ANIMATING) {
+                if (this.is_animating) {
                     // If we wish to have Animations Enabled,
                     // Progress to ARE Logic
                     this.AREState = 2;
@@ -466,7 +604,7 @@ class NESTetrisGame {
                         // Clear the lines, update the score, then spawn a new piece
                         this.clearLines();
                         this.updateScore();
-                        this.spawnPiece();
+                        this.spawnRandomizedPiece();
                     }
                 }
             }
@@ -567,7 +705,7 @@ class NESTetrisGame {
             if (this.vramRow >= this.height) {
                 // ARE8 will spawn the new piece,
                 // setting current_piece to a new piece up done
-                this.spawnPiece();
+                this.spawnRandomizedPiece();
                 // And, we're ready to go back into gamestate logic
                 this.AREState = 1;
             }

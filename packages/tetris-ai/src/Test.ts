@@ -1,7 +1,7 @@
 import { MCTS, MCTSArgs, MCTSTrainingData } from "./MCTS";
 import { NN, NNTrainingData } from "./NN";
 import { AbstractGame, GameInputTensor } from "./AbstractGame";
-import { FallingStarAbstractGame, FallingStarState } from "./FallingStarAbstractGame";
+import { TetrisAbstractGame, TetrisState } from "./TetrisAbstractGame";
 import promptSync from 'prompt-sync';
 
 let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
@@ -19,10 +19,10 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize:
     // Create all the simultaneous MCTS's
     let simultaneousMCTSs: MCTSInfo[] = [];
     for(let i = 0; i < gamesPerGeneration; i++) {
-        let fallingStarInitState = game.getInitialState();
-        let fallingStarMCTS = new MCTS(game, fallingStarInitState, mctsArgs);
+        let initialState = game.getInitialState();
+        let mcts = new MCTS(game, initialState, mctsArgs);
         simultaneousMCTSs.push({
-            mcts: fallingStarMCTS,
+            mcts: mcts,
             pendingInputs: [],
             receivedOutputs: [],
             totalStepsMade: 0,
@@ -161,14 +161,14 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize:
 setTimeout(async () => {
     const prompt = promptSync({sigint: true});
 
-    let fallingStarGame = new FallingStarAbstractGame();
+    let abstractGame = new TetrisAbstractGame();
 
     // Get the shape of the tensor, and make a NN from it
-    let initInputTensor = fallingStarGame.getInitialState().toTensor();
+    let initInputTensor = abstractGame.getInitialState().toTensor();
     // Create the neural network
-    let fallingStarNN = new NN(initInputTensor, fallingStarGame.getNumActions());
+    let gameNN = new NN(initInputTensor, abstractGame.getNumActions());
     // Warm the model
-    let initOutputTensor = (await fallingStarNN.evaluateBatch([initInputTensor]))[0];
+    let initOutputTensor = (await gameNN.evaluateBatch([initInputTensor]))[0];
 
     // ===================
     // Neural Network Parameters
@@ -232,11 +232,11 @@ setTimeout(async () => {
                 // On the 0th evaluation, all outputs will be approximately the same anyway
                 results = inputTensor.map(() => initOutputTensor);
             } else {
-                results = await fallingStarNN.evaluateBatch(inputTensor, BATCH_SIZE);
+                results = await gameNN.evaluateBatch(inputTensor, BATCH_SIZE);
             }
             // Print periodic time statistics
             numEvaluations += inputTensor.length;
-            if (Math.floor(numEvaluations/15000) > Math.floor(lastNumEvaluationsPrint/15000)) {
+            if (Math.floor(numEvaluations/1000) > Math.floor(lastNumEvaluationsPrint/1000)) {
                 console.log("%d Evaluations (%dms per eval)", numEvaluations, ((performance.now() - startTime) / numEvaluations).toPrecision(3));
                 lastNumEvaluationsPrint = numEvaluations;
             }
@@ -252,7 +252,7 @@ setTimeout(async () => {
         console.log("Beginning Generation %d\n", generation);
 
         // Accumulate the training data
-        let trainingData = await runGames(fallingStarGame, GAMES_PER_GENERATION, BATCH_SIZE, MAX_MCTS_TURNS, getNNResults, {
+        let trainingData = await runGames(abstractGame, GAMES_PER_GENERATION, BATCH_SIZE, MAX_MCTS_TURNS, getNNResults, {
             numMCTSSims: MCTS_SIMULATIONS,
             numParallelSims: MCTS_BATCH_SIZE,
             gamma: 0.98,
@@ -294,7 +294,7 @@ setTimeout(async () => {
         startTime = performance.now();
         let currentBatchTrainingData = generationTrainingData.flat();
         console.log("Begin Training on %d inputs", currentBatchTrainingData.length);
-        let loss = await fallingStarNN.trainBatch(currentBatchTrainingData, TRAINING_BATCH_SIZE, NUM_EPOCHS);
+        let loss = await gameNN.trainBatch(currentBatchTrainingData, TRAINING_BATCH_SIZE, NUM_EPOCHS);
         let totalSeconds = ((performance.now() - startTime) / 1000);
         console.log("Done Training: %s seconds for %d inputs (%d samples / second)\n", totalSeconds, currentBatchTrainingData.length, currentBatchTrainingData.length * NUM_EPOCHS / totalSeconds);
 
@@ -303,7 +303,7 @@ setTimeout(async () => {
         console.log("Policy Cross-Entropy Loss: %d\n", loss[1].toFixed(5));
 
         // Print how the NN evaluates the initial state
-        let generationOutputTensor = (await fallingStarNN.evaluateBatch([initInputTensor]))[0];
+        let generationOutputTensor = (await gameNN.evaluateBatch([initInputTensor]))[0];
         console.log("Output from initial state: ", generationOutputTensor, "\n");
         console.log("-------\n");
 
@@ -319,7 +319,7 @@ setTimeout(async () => {
         lastNumEvaluationsPrint = 0;
 
         // Run evaluation games
-        let evaluationTrainingData = await runGames(fallingStarGame, NUM_EVALUATION_GAMES, BATCH_SIZE, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
+        let evaluationTrainingData = await runGames(abstractGame, NUM_EVALUATION_GAMES, BATCH_SIZE, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
             numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
             numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
             gamma: 0.98,
@@ -344,5 +344,5 @@ setTimeout(async () => {
         console.log("Average Q-Value: %d (+/- %d)\n", averageQ.toFixed(3), QStandardDeviation.toFixed(2));
     }
 
-    fallingStarNN.destroy();
+    gameNN.destroy();
 }, 0);
