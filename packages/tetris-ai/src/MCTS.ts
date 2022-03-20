@@ -465,7 +465,8 @@ class MCTS {
     }
     
     // Sample a move, can only be used when this.iterate returns []
-    sampleMove() {
+    // Returns the move that was chosen
+    sampleMove(): number {
         if (this.initializedRootNode == false) {
             throw new Error("The root not hasn't been initialized yet!");
         }
@@ -582,6 +583,9 @@ class MCTS {
         this.rootNode = chosenChanceNode.childNodes[chosenSample];
         // Mark that this new rootnode hasn't been initialized yet
         this.initializedRootNode = false;
+
+        // Return the chosen action
+        return chosenAction;
     }
 
     getTrainingData(): MCTSTrainingData[] {

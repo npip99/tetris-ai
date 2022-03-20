@@ -50,10 +50,17 @@ class TetrisState extends GameState {
 
     toString() {
         let ret = "";
+        if (this.nesTetrisGame.game_over) {
+            ret += "GAME OVER\n";
+            ret += "Could not place: " + this.nesTetrisGame.current_piece.abstractTetrisPiece.name + "\n";
+        } else {
+            ret += "Current Piece: " + this.nesTetrisGame.current_piece.abstractTetrisPiece.name + "\n";
+            ret += "Next Piece: " + this.nesTetrisGame.next_piece.abstractTetrisPiece.name + "\n";
+        }
         for(let y = 0; y < BOARD_HEIGHT; y++) {
             let rowStr = "[";
             for(let x = 0; x < BOARD_WIDTH; x++) {
-                if (this.nesTetrisGame.board[y][x]) {
+                if (this.nesTetrisGame.board.getSquareTaken(x, y)) {
                     rowStr += "*";
                 } else {
                     rowStr += " ";
@@ -158,16 +165,22 @@ class TetrisAbstractGame extends AbstractGame {
             // Rotate CW the correct number of times
             if (tetrisAction.orientation == 3) {
                 // Quickskip for CCW
-                newState.nesTetrisGame.hardCCW();
+                if (!newState.nesTetrisGame.hardCCW()) {
+                    newState.nesTetrisGame.game_over = true;
+                }
                 break;
             }
-            newState.nesTetrisGame.hardCW();
+            if (!newState.nesTetrisGame.hardCW()) {
+                newState.nesTetrisGame.game_over = true;
+            }
         }
 
         // Move the piece into place at 30Hz
         let tetrisPieceSpawnLocation = 5;
         if (tetrisAction.x != tetrisPieceSpawnLocation) {
-            newState.nesTetrisGame.board.tryMovePiece(newState.nesTetrisGame.current_piece, tetrisAction.x - tetrisPieceSpawnLocation, 0);
+            if (!newState.nesTetrisGame.board.tryMovePiece(newState.nesTetrisGame.current_piece, tetrisAction.x - tetrisPieceSpawnLocation, 0)) {
+                newState.nesTetrisGame.game_over = true;
+            }
         }
 
         // Now hard-drop

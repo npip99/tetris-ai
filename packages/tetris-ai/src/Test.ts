@@ -158,6 +158,59 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize:
     return trainingData;
 }
 
+let playGame = async (game: AbstractGame, batchSize: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<void> => {
+    let initialState = game.getInitialState();
+    let mcts = new MCTS(game, initialState, mctsArgs);
+    let totalStepsMade = 0;
+
+    console.log("Initial State\n%s\n", initialState.toString());
+
+    while(true) {
+        // Gather any inputs the mcts wants evaluated
+        let desiredEvals: GameInputTensor[] = [];
+        while (desiredEvals.length == 0 && !mcts.isGameOver() && totalStepsMade < maxTurns) {
+            desiredEvals = mcts.iterate();
+            // If the mcts doesn't want any further evaluations, sample a move
+            if (desiredEvals.length == 0) {
+                let Ns = [];
+                let validActions = game.getValidActions(mcts.rootNode.gameState);
+                for(let i = 0; i < game.getNumActions(); i++) {
+                    if (validActions[i]) {
+                        Ns[i] = mcts.rootNode.children[i].numVisits / (mcts.rootNode.numVisits - 1);
+                    }
+                }
+                for(let orientation = 0; orientation < 4; orientation++) {
+                    let priorRow = "";
+                    for(let x = 0; x < 10; x++) {
+                        priorRow += " " + mcts.rootNode.priorPolicy[x * 4 + orientation].toFixed(3);
+                    }
+                    let row = "";
+                    for(let x = 0; x < 10; x++) {
+                        row += " " + Ns[x * 4 + orientation].toFixed(3);
+                    }
+                    console.log("Orientation %d [Prior]: %s", orientation, priorRow);
+                    console.log("Orientation %d  [MCTS]: %s\n", orientation, row);
+                }
+                let chosenMove = mcts.sampleMove();
+                totalStepsMade++;
+                console.log("Move %d: Chose x=%d, orientation=%d\n", totalStepsMade, Math.floor(chosenMove / 4), chosenMove % 4);
+                console.log("%s\n", mcts.rootNode.gameState.toString());
+            }
+        }
+
+        // If the MCTS doesn't want any more evaluations, it's finished
+        if (desiredEvals.length == 0) {
+            break;
+        }
+
+        // Evaluate and commit
+        let nnResults = await getNNResults(desiredEvals);
+        mcts.commitNNResults(nnResults);
+    }
+
+    console.log("Done playing game\n");
+}
+
 setTimeout(async () => {
     const prompt = promptSync({sigint: true});
 
@@ -342,6 +395,22 @@ setTimeout(async () => {
         let averageQ = Q.reduce((acc, c) => acc + c, 0) / Q.length;
         let QStandardDeviation = Math.sqrt(Q.reduce((acc, c) => acc + Math.pow(c - averageQ, 2), 0) / Q.length);
         console.log("Average Q-Value: %d (+/- %d)\n", averageQ.toFixed(3), QStandardDeviation.toFixed(2));
+
+        // ===============
+        // Play the NN
+        // ===============
+
+        // Play the game, this will output the game as well
+        await playGame(abstractGame, BATCH_SIZE, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
+            numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
+            numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
+            gamma: 0.98,
+            // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
+            temperature: 0.0,
+            // 1.25 for training, 2.5 for match play
+            cPuctInit: 2.5,
+            cPuctBase: 18000,
+        });
     }
 
     gameNN.destroy();

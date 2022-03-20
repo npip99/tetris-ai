@@ -10,11 +10,13 @@ const TETRIS_PIECE_DIMENSIONS = 5;
 let TotalNumAbstractPieces = 0;
 
 class AbstractTetrisPiece {
+    name: string;
     squareLocations: number[][][];
     defaultOrientation: number;
     pieceID: number;
 
-    constructor(defaultOrientation: number, data_2d: number[][][]) {
+    constructor(name: string, defaultOrientation: number, data_2d: number[][][]) {
+        this.name = name;
         this.defaultOrientation = defaultOrientation;
 
         // Populate squareLocations
@@ -51,7 +53,7 @@ class AbstractTetrisPiece {
     }
 };
 
-const T_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(2, [
+const T_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("T", 2, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 1, 0, 0],
@@ -82,7 +84,7 @@ const T_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(2, [
     ],
 ]);
 
-const J_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(3, [
+const J_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("J", 3, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 1, 0, 0],
@@ -113,7 +115,7 @@ const J_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(3, [
     ],
 ]);
 
-const Z_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
+const Z_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("Z", 0, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0],
@@ -131,7 +133,7 @@ const Z_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
 ]);
 
 
-const O_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
+const O_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("O", 0, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0],
@@ -141,7 +143,7 @@ const O_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
     ],
 ]);
 
-const S_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
+const S_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("S", 0, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0],
@@ -159,7 +161,7 @@ const S_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(0, [
 ]);
 
 
-const L_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(1, [
+const L_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("L", 1, [
     [
         [0, 0, 0, 0, 0],
         [0, 0, 1, 0, 0],
@@ -190,7 +192,7 @@ const L_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(1, [
     ],
 ]);
 
-const I_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece(1, [
+const I_PIECE: AbstractTetrisPiece = new AbstractTetrisPiece("I", 1, [
     [
         [0, 0, 1, 0, 0],
         [0, 0, 1, 0, 0],

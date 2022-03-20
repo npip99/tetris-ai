@@ -524,11 +524,11 @@ class NESTetrisGame {
     }
 
     hardCCW() {
-        this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CCW);
+        return this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CCW);
     }
 
     hardCW() {
-        this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CW);
+        return this.board.tryRotatePiece(this.current_piece, TetrisRotation.ROTATE_CW);
     }
 
     // Harddrop, simulates many iterations until the drop,
