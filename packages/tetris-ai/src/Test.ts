@@ -271,6 +271,7 @@ setTimeout(async () => {
 
     // Main loop over all generations
     let generationTrainingData = [];
+    let generationTrainingDataLengths = [];
     for(let generation = 0; generation <= NUM_GENERATIONS; generation++) {
         // Tracking periodic time statistics
         let startTime = performance.now();
@@ -334,9 +335,13 @@ setTimeout(async () => {
             });
         }
         // Add to the list of the generation's training data
-        generationTrainingData.push(nnTrainingData);
-        while (generationTrainingData.length > slidingWindowSize(generation)) {
-            generationTrainingData.splice(0, 1);
+        generationTrainingData.push(...nnTrainingData);
+        generationTrainingDataLengths.push(nnTrainingData.length);
+        // Check if we have too many generations' worth of training data
+        while (generationTrainingDataLengths.length > slidingWindowSize(generation)) {
+            // Remove the oldest generations' training data
+            generationTrainingData.splice(0, generationTrainingDataLengths[0]);
+            generationTrainingDataLengths.splice(0, 1);
         }
 
         // ===============
@@ -345,11 +350,10 @@ setTimeout(async () => {
 
         // Train the neural network on this data
         startTime = performance.now();
-        let currentBatchTrainingData = generationTrainingData.flat();
-        console.log("Begin Training on %d inputs", currentBatchTrainingData.length);
-        let loss = await gameNN.trainBatch(currentBatchTrainingData, TRAINING_BATCH_SIZE, NUM_EPOCHS);
+        console.log("Begin Training on %d inputs", generationTrainingData.length);
+        let loss = await gameNN.trainBatch(generationTrainingData, TRAINING_BATCH_SIZE, NUM_EPOCHS);
         let totalSeconds = ((performance.now() - startTime) / 1000);
-        console.log("Done Training: %s seconds for %d inputs (%d samples / second)\n", totalSeconds, currentBatchTrainingData.length, currentBatchTrainingData.length * NUM_EPOCHS / totalSeconds);
+        console.log("Done Training: %s seconds for %d inputs (%d samples / second)\n", totalSeconds, generationTrainingData.length, generationTrainingData.length * NUM_EPOCHS / totalSeconds);
 
         // Display loss statistics
         console.log("Value MSE Loss: %d", loss[0].toFixed(5));

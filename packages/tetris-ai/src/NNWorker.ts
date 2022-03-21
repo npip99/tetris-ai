@@ -227,12 +227,10 @@ addEventListener('message', async e => {
             resultData: results,
         }, undefined, results.map(arr => arr.buffer));
     } else if (data.type == 'TRAIN_REQUEST') {
-        interface NNTrainingData {
-            input: number[][][],
-            output: number[][],
-        };
-
-        let trainingData = data.trainingData as NNTrainingData[];
+        let trainingInput = data.trainingInput as Float32Array;
+        let trainingInputShape = data.trainingInputShape as number[];
+        let trainingOutputs = data.trainingOutputs as Float32Array[];
+        let trainingOutputShapes = data.trainingOutputShapes as number[][];
         let trainingBatchSize = data.trainingBatchSize as number;
         let numEpochs = data.numEpochs as number;
         let modelID = data.modelID as number;
@@ -240,9 +238,9 @@ addEventListener('message', async e => {
         let trainID = data.id as number;
 
         // Setup the input/output
-        let inputData = tf.tensor4d(trainingData.map(a => a.input));
-        let outputData = trainingData[0].output.map((_, i) => {
-            return tf.tensor2d(trainingData.map(a => a.output[i]));
+        let inputData = tf.tensor4d(trainingInput, [trainingInputShape[0], trainingInputShape[1], trainingInputShape[2], trainingInputShape[3]]);
+        let outputData = trainingOutputs.map((trainingOutput, i) => {
+            return tf.tensor2d(trainingOutput, [trainingOutputShapes[i][0], trainingOutputShapes[i][1]]);
         });
 
         // Train the model

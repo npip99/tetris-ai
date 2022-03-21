@@ -1,4 +1,5 @@
 
+import { TypedArray } from '@tensorflow/tfjs-node-gpu';
 import Worker from 'web-worker';
 
 
@@ -42,6 +43,36 @@ function createWorker() {
 function destroyWorker() {
     worker.terminate();
     worker = null;
+}
+
+// ArrayHelper
+
+interface FlattenedArray {
+    typedArray: TypedArray,
+    shape: number[],
+};
+
+// Create a 4D array
+function create4DArray(inputArray: number[][][][]): FlattenedArray {
+    let arrayShape = [inputArray.length, inputArray[0].length, inputArray[0][0].length, inputArray[0][0][0].length];
+    let internalBuffer = new ArrayBuffer(4 * arrayShape[0] * arrayShape[1] * arrayShape[2] * arrayShape[3]);
+    let typedArray = new Float32Array(internalBuffer);
+    let offset = 0;
+    for(let i = 0; i < arrayShape[0]; i++) {
+        for(let j = 0; j < arrayShape[1]; j++) {
+            for(let k = 0; k < arrayShape[2]; k++) {
+                for(let m = 0; m < arrayShape[3]; m++) {
+                    typedArray[offset] = inputArray[i][j][k][m];
+                    offset++;
+                }
+            }
+        }
+    }
+
+    return {
+        typedArray: typedArray,
+        shape: arrayShape,
+    };
 }
 
 // Neural Network
@@ -93,30 +124,17 @@ class NN {
         });
 
         // Efficiently construct a TypedArray out of the inputData
-        let inputDataShape = [inputData.length, inputData[0].length, inputData[0][0].length, inputData[0][0][0].length];
-        let internalBuffer = new ArrayBuffer(4 * inputDataShape[0] * inputDataShape[1] * inputDataShape[2] * inputDataShape[3]);
-        let inputDataTypedArray = new Float32Array(internalBuffer);
-        let offset = 0;
-        for(let i = 0; i < inputDataShape[0]; i++) {
-            for(let j = 0; j < inputDataShape[1]; j++) {
-                for(let k = 0; k < inputDataShape[2]; k++) {
-                    for(let m = 0; m < inputDataShape[3]; m++) {
-                        inputDataTypedArray[offset] = inputData[i][j][k][m];
-                        offset++;
-                    }
-                }
-            }
-        }
+        let flattenedArray = create4DArray(inputData);
 
         // Request an inference
         worker.postMessage({
             type: 'INFERENCE_REQUEST',
             id: inferenceID,
             modelID: this.modelID,
-            inputData: inputDataTypedArray,
-            inputDataShape: inputDataShape,
+            inputData: flattenedArray.typedArray,
+            inputDataShape: flattenedArray.shape,
             batchSize: batchSize || inputData.length,
-        }, [internalBuffer]);
+        }, [flattenedArray.typedArray.buffer]);
 
         // Get the inference result
         let inferenceResult = await inferencePromise;
@@ -155,15 +173,30 @@ class NN {
             };
         });
 
+        let trainingInput = trainingData.map(a => a.input);
+        let trainingOutputs = trainingData[0].output.map((_, i) => {
+            return trainingData.map(a => a.output[i]);
+        });
+
+        let flattenedInput = create4DArray(trainingInput);
+        let flattenedOutputs = trainingOutputs.map(outputData => {
+            let flattenedOutput = create4DArray([[outputData]]);
+            flattenedOutput.shape.splice(0, 2);
+            return flattenedOutput;
+        });
+
         // Request an inference
         worker.postMessage({
             type: 'TRAIN_REQUEST',
             id: trainID,
             modelID: this.modelID,
-            trainingData: trainingData,
+            trainingInput: flattenedInput.typedArray,
+            trainingInputShape: flattenedInput.shape,
+            trainingOutputs: flattenedOutputs.map(flattenedOutput => flattenedOutput.typedArray),
+            trainingOutputShapes: flattenedOutputs.map(flattenedOutput => flattenedOutput.shape),
             trainingBatchSize: trainingBatchSize,
             numEpochs: numEpochs,
-        });
+        }, [flattenedInput.typedArray.buffer, ...flattenedOutputs.map(flattenedOutput => flattenedOutput.typedArray.buffer)]);
 
         // Wait for the training to finish
         return await trainPromise;
