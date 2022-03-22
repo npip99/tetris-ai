@@ -1,13 +1,19 @@
 import * as tf from '@tensorflow/tfjs-node-gpu';
 import path from 'path';
+import fs from 'fs';
 import { spawn } from 'child_process';
+
+interface NNParamters {
+    numFilters: number,
+    numResidualBlocks: number,
+}
 
 // Handles TFJS in a separate thread
 
-async function createNNModel(input_tensor: number[][][], output_actions: number): Promise<tf.LayersModel> {
+async function createNNModel(input_tensor: number[][][], output_actions: number, nnParams: NNParamters): Promise<tf.LayersModel> {
     // Topology parameters
-    const numFilters = 64; // 256
-    const numBlocks = 10; // 40
+    const numFilters = nnParams.numFilters; // 256 in AlphaZero
+    const numBlocks = nnParams.numResidualBlocks; // 40 in AlphaZero
     const numSEChannels = 32;
 
     // HyperParameters
@@ -163,9 +169,17 @@ async function createNNModel(input_tensor: number[][][], output_actions: number)
     return model;
 }
 
+async function saveModel(model: tf.LayersModel, filename: string) {
+    let modelsPath = path.resolve('../../models');
+    if (!fs.existsSync(modelsPath)) {
+        fs.mkdirSync(modelsPath);
+    }
+    await model.save('file://' + path.resolve(modelsPath, filename));
+}
+
 async function createInt8NNModel(model: tf.LayersModel): Promise<tf.GraphModel> {
     // Save the model
-    await this.model.save('file://' + path.resolve('../../models/MyModel'));
+    await saveModel(this.model, 'MyModel');
     // Convert to an int8 graph model
     await new Promise(function (resolve, reject) {
         let child = spawn("./convert-model.sh", [
@@ -190,7 +204,7 @@ let models: Record<number, tf.LayersModel> = {};
 addEventListener('message', async e => {
     let data = e.data;
     if (data.type == 'CREATE_MODEL') {
-        let model = await createNNModel(data.input_tensor, data.output_actions);
+        let model = await createNNModel(data.inputTensor, data.numOutputs, data.nnParams);
         models[data.id] = model;
         postMessage({
             type: 'MODEL_CREATED',
@@ -257,7 +271,7 @@ addEventListener('message', async e => {
         tf.dispose(outputData);
 
         // Save the newly trained model
-        // await model.save('file://' + path.resolve('../../models/Model' + modelID + '_Train' + trainID));
+        // await saveModel(model, 'Model' + modelID + '_Train' + trainID);
 
         // Post back the training response, to indicate competion
         postMessage({

@@ -23,25 +23,26 @@ class TetrisState extends GameState {
     totalScore: number;
 
     toTensor(): GameInputTensor {
+        let numPieceTypes = this.nesTetrisGame.numPieceTypes;
         let inputTensor: number[][][] = [];
         for(let y = 0; y < BOARD_HEIGHT; y++) {
             inputTensor.push([]);
             for(let x = 0; x < BOARD_WIDTH; x++) {
-                inputTensor[y].push(new Array(1 + 7 + 7));
+                inputTensor[y].push(new Array(1 + numPieceTypes + numPieceTypes));
 
                 // Tetris Board channel
                 inputTensor[y][x][0] = this.nesTetrisGame.board.getSquareTaken(x, y) ? 1.0 : 0.0;
 
                 // Current-piece channels
                 let pieceID = this.nesTetrisGame.current_piece.abstractTetrisPiece.pieceID - 1;
-                for(let i = 0; i < 7; i++) {
+                for(let i = 0; i < numPieceTypes; i++) {
                     inputTensor[y][x][1 + i] = pieceID == i ? 1.0 : 0.0;
                 }
 
                 // Next-piece channels
                 let nextPieceID = this.nesTetrisGame.next_piece.abstractTetrisPiece.pieceID - 1;
-                for(let i = 0; i < 7; i++) {
-                    inputTensor[y][x][1 + 7 + i] = nextPieceID == i ? 1.0 : 0.0;
+                for(let i = 0; i < numPieceTypes; i++) {
+                    inputTensor[y][x][1 + numPieceTypes + i] = nextPieceID == i ? 1.0 : 0.0;
                 }
             }
         }
@@ -200,9 +201,9 @@ class TetrisAbstractGame extends AbstractGame {
         // immediateReward based on tetris rate
         let immediateReward = linesCleared > 0 ? Math.min(linesCleared / 4, 1.0) : null;
 
-        // Generate the possible transitions
+        // Generate the possible transitions, based on each piece type randomly selected
         let possibleTransitions: TetrisTransition[] = [];
-        for(let i = 0; i < 7; i++) {
+        for(let i = 0; i < newState.nesTetrisGame.numPieceTypes; i++) {
             let particularGameState = this.duplicateState(newState);
             particularGameState.nesTetrisGame.spawnParticularPiece(i);
             possibleTransitions.push({

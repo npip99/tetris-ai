@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 RUN useradd -rm -s /bin/bash -g root -G sudo ubuntu
 RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 USER ubuntu
+RUN echo 'export PATH="~/.local/bin:$PATH"' >> ~/.bashrc
 
 # Setup vim
 WORKDIR /home/ubuntu
@@ -32,15 +33,12 @@ RUN pip install --upgrade pip \
     && pip install tensorflowjs
 
 # Copy the tetris-ai directory
-COPY . /home/ubuntu/tetris-ai
-RUN sudo chown -R ubuntu /home/ubuntu/tetris-ai
+COPY --chown=ubuntu . /home/ubuntu/tetris-ai
 WORKDIR /home/ubuntu/tetris-ai
 
 # Install dependencies
-RUN sudo apt-get update \
-    && ./setup.sh \
-    && sudo apt-get autoremove -y \
-    && sudo apt-get clean \
-    && sudo rm -rf /tmp/* /var/tmp/*
-
-RUN echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc
+# RUN sudo apt-get update \
+#     && ./setup.sh \
+#     && sudo apt-get autoremove -y \
+#     && sudo apt-get clean \
+#     && sudo rm -rf /tmp/* /var/tmp/*

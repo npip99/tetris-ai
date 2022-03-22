@@ -307,7 +307,7 @@ class MCTS {
                         // Get a rough estimated of the EV of the unexplored Node
                         // expectedValue = Sum_j probabilities[j] * (immediateRewards[j] + gamma * childNodeEV)
                         // childNodeEV = (expectedValue - immediateRewards[j]) / gamma
-                        let childNodeEV = expectedValue;
+                        let childNodeEV = 0.25 * expectedValue;
                         let childNodeGameOver = this.game.getGameEnded(nextGameState);
                         if (childNodeGameOver) {
                             childNodeEV = 0.0;
@@ -430,7 +430,8 @@ class MCTS {
         // ==============
 
         // Run numParallelSims simulations in parallel, up to numMCTSSims on the root node
-        for(let i = 0; i < this.args.numParallelSims && this.rootNode.numVisits + this.pendingSimulations.length < this.args.numMCTSSims; i++) {
+        // Cap at 50 attempts before giving up
+        for(let i = 0; i < 50 * this.args.numParallelSims && this.pendingSimulations.length < this.args.numParallelSims && this.rootNode.numVisits + this.pendingSimulations.length < this.args.numMCTSSims; i++) {
             this.simulate();
         }
 

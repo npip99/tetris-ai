@@ -77,11 +77,16 @@ function create4DArray(inputArray: number[][][][]): FlattenedArray {
 
 // Neural Network
 
+interface NNParamters {
+    numFilters: number,
+    numResidualBlocks: number,
+}
+
 class NN {
     modelID: TFModel;
     modelPromise: Promise<TFModel>;
 
-    constructor(input_tensor: number[][][], output_actions: number) {
+    constructor(inputTensor: number[][][], numOutputs: number, nnParams: NNParamters) {
         if (worker == null) {
             createWorker();
         }
@@ -96,8 +101,9 @@ class NN {
         models[this.modelID] = true;
         worker.postMessage({
             type: 'CREATE_MODEL',
-            input_tensor,
-            output_actions,
+            inputTensor: inputTensor,
+            numOutputs: numOutputs,
+            nnParams: nnParams,
             id: this.modelID,
         });
     }

@@ -3,8 +3,115 @@ import { NN, NNTrainingData } from "./NN";
 import { AbstractGame, GameInputTensor } from "./AbstractGame";
 import { TetrisAbstractGame, TetrisState } from "./TetrisAbstractGame";
 import promptSync from 'prompt-sync';
+import clone from 'clone';
 
-let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
+interface TrainingParameters {
+    // ===================
+    // Neural Network Parameters
+    // ===================
+
+    // Size of each batch when making efficient NN evaluations
+    nnBatchSize: number,
+    // Number of filters in each convolution
+    nnNumFilters: number,
+    // Number of residual blocks deep to make the NN
+    nnNumResidualBlocks: number,
+    // Batch size when training the NN
+    nnTrainingBatchSize: number,
+
+    // ===================
+    // Generation parameters
+    // ===================
+
+    // Number of generations to train for
+    numGenerations: number,
+    // Number of games per generation
+    gamesPerGeneration: number,
+    // Maximum number of turns before ending the game
+    maxTurns: number,
+    // Number of simulations per move in a game
+    // Affects the quality of each root node / training sample
+    mctsSims: number, // 800 for Chess/Go, 50 for Atari
+
+    // Number of simulations to do in parallel, for each MCTS tree
+    // Increases MCTS breadth slightly, and allows final games to saturate their batches
+    // Reduces maximum RAM usage, from fewer active MCTS's
+    mctsParallelSims: number,
+    // Number of NN batches to keep on standby
+    // Increases maximum RAM usage, from more active MCTS's
+    mctsNumStandbyBatches: number,
+
+    // ===================
+    // Training parameters
+    // ===================
+
+    // Size of the sliding window of game samples, based on the generation
+    slidingWindowSize: (_: number) => number,
+    // Number of epochs when training the NN
+    nnNumEpochs: number,
+
+    // ===================
+    // Evaluation parameters
+    // ===================
+
+    // Number of games used to evaluate model quality
+    evaluationNumGames: number,
+    // Number of simulations per move during match-play
+    evaluationMCTSSims: number,
+    // Maximum number of turns before ending the game
+    evaluationMaxTurns: number,
+
+    // Number of evaluations simulations to do in parallel, for each MCTS tree
+    evaluationMCTSParallelSims: number,
+};
+
+let defaultTrainingParameters: TrainingParameters = {
+    nnBatchSize: 128,
+    nnNumFilters: 64,
+    nnNumResidualBlocks: 10,
+    nnTrainingBatchSize: 64,
+
+    numGenerations: 5,
+    gamesPerGeneration: 128,
+    maxTurns: 24,
+    mctsSims: 32,
+    mctsParallelSims: 4,
+    mctsNumStandbyBatches: 1,
+
+    slidingWindowSize: (gen: number) => (4 + Math.floor( Math.max(gen - 4, 0)/2 )),
+    nnNumEpochs: 2,
+
+    evaluationNumGames: 1,
+    evaluationMCTSSims: 32,
+    evaluationMaxTurns: 256,
+
+    evaluationMCTSParallelSims: 16,
+};
+
+let realTrainingParameters: TrainingParameters = {
+    nnBatchSize: 512,
+    nnNumFilters: 128,
+    nnNumResidualBlocks: 20,
+    nnTrainingBatchSize: 128,
+
+    numGenerations: 30,
+    gamesPerGeneration: 512,
+    maxTurns: 64,
+    mctsSims: 256,
+    mctsParallelSims: 4,
+    mctsNumStandbyBatches: 2,
+
+    slidingWindowSize: (gen: number) => (4 + Math.floor( Math.max(gen - 4, 0)/2 )),
+    nnNumEpochs: 2,
+
+    evaluationNumGames: 32,
+    evaluationMCTSSims: 128,
+    evaluationMaxTurns: 128,
+
+    evaluationMCTSParallelSims: 4,
+};
+
+let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize: number, mctsNumStandbyBatches: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<MCTSTrainingData[][]> => {
     let trainingData: MCTSTrainingData[][] = [];
 
     // Info on each running MCTS
@@ -140,8 +247,8 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize:
         if (currentlyConstructingBatch.allInputs.length > 0
             && (currentlyConstructingBatch.allInputs.length >= batchSize || pendingBatches.length == 0)) {
             pendingBatches.push(evaluateCurrentlyConstructingBatch());
-            // Try to keep a second pending batch on standby, if we can
-            if (pendingBatches.length < 2) {
+            // Try to keep a few pending batches on standby, if we can
+            if (pendingBatches.length < 1 + mctsNumStandbyBatches) {
                 continue;
             }
         }
@@ -158,7 +265,7 @@ let runGames = async (game: AbstractGame, gamesPerGeneration: number, batchSize:
     return trainingData;
 }
 
-let playGame = async (game: AbstractGame, batchSize: number, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<void> => {
+let playGame = async (game: AbstractGame, maxTurns: number, getNNResults: (inputTensor: GameInputTensor[]) => Promise<number[][][]>, mctsArgs: MCTSArgs): Promise<void> => {
     let initialState = game.getInitialState();
     let mcts = new MCTS(game, initialState, mctsArgs);
     let totalStepsMade = 0;
@@ -179,6 +286,8 @@ let playGame = async (game: AbstractGame, batchSize: number, maxTurns: number, g
                         Ns[i] = mcts.rootNode.children[i].numVisits / (mcts.rootNode.numVisits - 1);
                     }
                 }
+                console.log("\nNumSims: %d", mcts.rootNode.numVisits);
+                console.log("Value: %d\n", mcts.rootNode.avgValue);
                 for(let orientation = 0; orientation < 4; orientation++) {
                     let priorRow = "";
                     for(let x = 0; x < 10; x++) {
@@ -211,68 +320,63 @@ let playGame = async (game: AbstractGame, batchSize: number, maxTurns: number, g
     console.log("Done playing game\n");
 }
 
+function toHumanReadableStr(num: number, precision: number) {
+    let isThousand = false;
+    if (num > 1000) {
+        num /= 1000;
+        isThousand = true;
+    }
+    let isMillion = false;
+    if (num > 1000) {
+        num /= 1000;
+        isMillion = true;
+    }
+    let numStr = num.toPrecision(precision);
+    if (isMillion) {
+        numStr += " Million";
+    } else if (isThousand) {
+        numStr += " Thousand";
+    }
+    return numStr;
+}
+
 setTimeout(async () => {
     const prompt = promptSync({sigint: true});
 
     let abstractGame = new TetrisAbstractGame();
+    let trainingParameters = defaultTrainingParameters;
 
     // Get the shape of the tensor, and make a NN from it
     let initInputTensor = abstractGame.getInitialState().toTensor();
     // Create the neural network
-    let gameNN = new NN(initInputTensor, abstractGame.getNumActions());
+    let gameNN = new NN(initInputTensor, abstractGame.getNumActions(), {
+        numFilters: trainingParameters.nnNumFilters,
+        numResidualBlocks: trainingParameters.nnNumResidualBlocks,
+    });
     // Warm the model
     let initOutputTensor = (await gameNN.evaluateBatch([initInputTensor]))[0];
+    // The tensor to use for Generation 0
+    let gen0Tensor = clone(initOutputTensor);
+    gen0Tensor[0][0] = 0.01;
+    for(let i = 0; i < gen0Tensor[1].length; i++) {
+        gen0Tensor[1][i] = 1 / gen0Tensor[1].length;
+    }
 
-    // ===================
-    // Neural Network Parameters
-    // ===================
-
-    // Size of NN evaluation batches
-    const BATCH_SIZE = 128;
-
-    // ===================
-    // Generation parameters
-    // ===================
-
-    // Number of generations to train for
-    const NUM_GENERATIONS = 5; // 30-60 for Connect4
-    // Number of games per generation
-    const GAMES_PER_GENERATION = 128; // 8k for Connect4
-    // Number of simulations per sample in a game
-    const MCTS_SIMULATIONS = 32; // 800 for Chess/Go, 50 for Atari
-    // Number of simulations to do in parallel, for each MCTS tree
-    const MCTS_BATCH_SIZE = 4;
-    // Maximum number of turns before ending the game
-    const MAX_MCTS_TURNS = 24;
-
-    // ===================
-    // Training parameters
-    // ===================
-
-    // Size of the sliding window of game samples, based on the generation
-    const slidingWindowSize = (gen: number) => (4 + Math.floor( Math.max(gen - 4, 0)/2 ));
-    // Training batch size
-    const TRAINING_BATCH_SIZE = 128;
-    // Number of epochs to train for
-    const NUM_EPOCHS = 2;
-
-    // ===================
-    // Evaluation parameters
-    // ===================
-
-    // Number of games used to evaluate model quality
-    const NUM_EVALUATION_GAMES = 1;
-    // Number of simulations per move during match-play
-    const EVALUATION_MCTS_SIMULATIONS = 32;
-    // Number of evaluations simulations to do in parallel, for each MCTS tree
-    const EVALUATION_MCTS_BATCH_SIZE = 16;
-    // Maximum number of turns before ending the game
-    const EVALUATION_MAX_MCTS_TURNS = 256;
+    // Log training information
+    console.log("=============\n=============\n");
+    console.log("Training NN on %d outputs", gen0Tensor[0].length + gen0Tensor[1].length);
+    // Total number of simulations is Games per generation * Max turns per game * Simulations per turn
+    let maxNumSims = trainingParameters.gamesPerGeneration * trainingParameters.maxTurns * trainingParameters.mctsSims;
+    // Each move is a training sample
+    let maxTrainingSamples = trainingParameters.gamesPerGeneration * trainingParameters.maxTurns;
+    console.log("Maximum of %s evaluations per generation", toHumanReadableStr(maxNumSims, 2));
+    console.log("Maximum of %s training samples per generation", toHumanReadableStr(maxTrainingSamples, 2));
+    console.log("");
 
     // Main loop over all generations
     let generationTrainingData = [];
     let generationTrainingDataLengths = [];
-    for(let generation = 0; generation <= NUM_GENERATIONS; generation++) {
+    for(let generation = 0; generation <= trainingParameters.numGenerations; generation++) {
         // Tracking periodic time statistics
         let startTime = performance.now();
         let numEvaluations = 0;
@@ -284,9 +388,9 @@ setTimeout(async () => {
             let results: (number[][])[];
             if (generation == 0) {
                 // On the 0th evaluation, all outputs will be approximately the same anyway
-                results = inputTensor.map(() => initOutputTensor);
+                results = inputTensor.map(() => gen0Tensor);
             } else {
-                results = await gameNN.evaluateBatch(inputTensor, BATCH_SIZE);
+                results = await gameNN.evaluateBatch(inputTensor, trainingParameters.nnBatchSize);
             }
             // Print periodic time statistics
             numEvaluations += inputTensor.length;
@@ -306,10 +410,10 @@ setTimeout(async () => {
         console.log("Beginning Generation %d\n", generation);
 
         // Accumulate the training data
-        let trainingData = await runGames(abstractGame, GAMES_PER_GENERATION, BATCH_SIZE, MAX_MCTS_TURNS, getNNResults, {
-            numMCTSSims: MCTS_SIMULATIONS,
-            numParallelSims: MCTS_BATCH_SIZE,
-            gamma: 0.98,
+        let trainingData = await runGames(abstractGame, trainingParameters.gamesPerGeneration, trainingParameters.nnBatchSize, trainingParameters.mctsNumStandbyBatches, trainingParameters.evaluationMaxTurns, getNNResults, {
+            numMCTSSims: trainingParameters.mctsSims,
+            numParallelSims: trainingParameters.mctsParallelSims,
+            gamma: 0.9,
             // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
             temperature: 1.0,
             // 1.25 for training, 2.5 for match play
@@ -326,10 +430,11 @@ setTimeout(async () => {
         // Construct the NN training data from this generation
         let nnTrainingData: NNTrainingData[] = [];
         for(let trainingDatum of trainingData.flat()) {
+            let actualRatio = Math.max(1.0 - 0.1 * generation, 0.5);
             nnTrainingData.push({
                 input: trainingDatum.input,
                 output: [
-                    [trainingDatum.expectedValue * 0.5 + trainingDatum.actualValue * 0.5],
+                    [trainingDatum.actualValue * actualRatio + trainingDatum.expectedValue * (1.0 - actualRatio)],
                     trainingDatum.policy,
                 ],
             });
@@ -338,7 +443,7 @@ setTimeout(async () => {
         generationTrainingData.push(...nnTrainingData);
         generationTrainingDataLengths.push(nnTrainingData.length);
         // Check if we have too many generations' worth of training data
-        while (generationTrainingDataLengths.length > slidingWindowSize(generation)) {
+        while (generationTrainingDataLengths.length > trainingParameters.slidingWindowSize(generation)) {
             // Remove the oldest generations' training data
             generationTrainingData.splice(0, generationTrainingDataLengths[0]);
             generationTrainingDataLengths.splice(0, 1);
@@ -351,9 +456,9 @@ setTimeout(async () => {
         // Train the neural network on this data
         startTime = performance.now();
         console.log("Begin Training on %d inputs", generationTrainingData.length);
-        let loss = await gameNN.trainBatch(generationTrainingData, TRAINING_BATCH_SIZE, NUM_EPOCHS);
+        let loss = await gameNN.trainBatch(generationTrainingData, trainingParameters.nnTrainingBatchSize, trainingParameters.nnNumEpochs);
         let totalSeconds = ((performance.now() - startTime) / 1000);
-        console.log("Done Training: %s seconds for %d inputs (%d samples / second)\n", totalSeconds, generationTrainingData.length, generationTrainingData.length * NUM_EPOCHS / totalSeconds);
+        console.log("Done Training: %s seconds for %d inputs (%d samples / second)\n", totalSeconds, generationTrainingData.length, generationTrainingData.length * trainingParameters.nnNumEpochs / totalSeconds);
 
         // Display loss statistics
         console.log("Value MSE Loss: %d", loss[0].toFixed(5));
@@ -376,12 +481,12 @@ setTimeout(async () => {
         lastNumEvaluationsPrint = 0;
 
         // Run evaluation games
-        let evaluationTrainingData = await runGames(abstractGame, NUM_EVALUATION_GAMES, BATCH_SIZE, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
-            numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
-            numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
-            gamma: 0.98,
+        let evaluationTrainingData = await runGames(abstractGame, trainingParameters.evaluationNumGames, trainingParameters.nnBatchSize, trainingParameters.mctsNumStandbyBatches, trainingParameters.evaluationMaxTurns, getNNResults, {
+            numMCTSSims: trainingParameters.evaluationMCTSSims,
+            numParallelSims: trainingParameters.evaluationMCTSParallelSims,
+            gamma: 0.9,
             // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-            temperature: 0.0,
+            temperature: 0.05,
             // 1.25 for training, 2.5 for match play
             cPuctInit: 2.5,
             cPuctBase: 18000,
@@ -405,12 +510,12 @@ setTimeout(async () => {
         // ===============
 
         // Play the game, this will output the game as well
-        await playGame(abstractGame, BATCH_SIZE, EVALUATION_MAX_MCTS_TURNS, getNNResults, {
-            numMCTSSims: EVALUATION_MCTS_SIMULATIONS,
-            numParallelSims: EVALUATION_MCTS_BATCH_SIZE,
-            gamma: 0.98,
+        await playGame(abstractGame, trainingParameters.evaluationMaxTurns, getNNResults, {
+            numMCTSSims: trainingParameters.evaluationMCTSSims,
+            numParallelSims: trainingParameters.evaluationMCTSParallelSims,
+            gamma: 0.9,
             // Training, 1 for 500k training steps, 0.5 for 250k training steps, 0.25 for 250k training steps
-            temperature: 0.0,
+            temperature: 0.05,
             // 1.25 for training, 2.5 for match play
             cPuctInit: 2.5,
             cPuctBase: 18000,

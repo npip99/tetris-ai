@@ -19,6 +19,13 @@ const TETRIS_PIECE_SPAWN_LOCATION = {
 };
 
 function getRandomAbstractPieceDistribution(avoid_piece: number): number[] {
+    if (TETRIS_PIECES.length != 7) {
+        // If it's not the standard NES 7 pieces, just evenly distribute the probabilities
+        return [...Array(TETRIS_PIECES.length).keys()].map(() => 1.0 / TETRIS_PIECES.length);
+    }
+
+    // Includes NES random selection quirks
+
     // First, a number from 0 to 7 inclusive is chosen
     const FIRST_PROBABILITIES = [
         1/8,
@@ -28,20 +35,21 @@ function getRandomAbstractPieceDistribution(avoid_piece: number): number[] {
         1/8,
         1/8,
         1/8,
-        1/8, 
+        1/8,
     ];
 
     // If 7 or avoid_piece, sample a second time from this distribution
-    const SECOND_PROBABILITIES = [
+    const SECOND_WEIGHTS = [
         9,
         8,
         8,
         8,
         9,
         7,
-        7, 
+        7,
     ];
-    const CUMULATIVE_SECOND_PROBABILITIES = SECOND_PROBABILITIES.reduce((a, b) => a + b, 0);
+    let cumulativeSecondWeights = SECOND_WEIGHTS.reduce((a, b) => a + b, 0);
+    const SECOND_PROBABILITIES = SECOND_WEIGHTS.map(weight => weight / cumulativeSecondWeights);
 
     let finalProbabilities = new Array(7);
     for(let i = 0; i < 7; i++) {
@@ -53,7 +61,7 @@ function getRandomAbstractPieceDistribution(avoid_piece: number): number[] {
             finalProbabilities[i] = FIRST_PROBABILITIES[i];
         }
         // Also include the odds of selecting "i" on the second draw
-        finalProbabilities[i] += (FIRST_PROBABILITIES[avoid_piece] + FIRST_PROBABILITIES[7]) * SECOND_PROBABILITIES[i] / CUMULATIVE_SECOND_PROBABILITIES;
+        finalProbabilities[i] += (FIRST_PROBABILITIES[avoid_piece] + FIRST_PROBABILITIES[7]) * SECOND_PROBABILITIES[i];
     }
 
     return finalProbabilities;
@@ -71,8 +79,8 @@ function getRandomAbstractPiece(avoid_piece: number) {
     let cumulativeProbability = probabilities[0];
 
     // While randomPieceSample is not yet inside of the cumulative probability,
-    // Explicit check chosenPiece + 1 < 7, in-case cumulativeProbability doesn't quite add up to 1.0
-    while(!(randomPieceSample < cumulativeProbability) && chosenPiece + 1 < 7) {
+    // Explicit check chosenPiece + 1 < num tetris pieces, in-case cumulativeProbability doesn't quite add up to 1.0
+    while(!(randomPieceSample < cumulativeProbability) && chosenPiece + 1 < TETRIS_PIECES.length) {
         // Include the next chosen piece,
         // to see if randomPieceNum will be within the now larger cumulative probability
         chosenPiece += 1;
@@ -104,6 +112,7 @@ class NESTetrisGame {
     next_piece: TetrisPiece;
     width: number = 10;
     height: number = 20;
+    numPieceTypes: number = TETRIS_PIECES.length;
     // Game State
     game_over: Boolean;
     initial_level: number;
