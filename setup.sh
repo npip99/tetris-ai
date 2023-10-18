@@ -24,7 +24,7 @@ sudo cp 000-default.conf /etc/apache2/sites-available/000-default.conf
 
 # Make ~/frontend our website html
 sudo rm -rf /var/www/html
-sudo ln -s ./frontend /var/www/html
+sudo ln -s $(realpath ./frontend) /var/www/html
 
 # Restart apache
 sudo systemctl restart apache2
