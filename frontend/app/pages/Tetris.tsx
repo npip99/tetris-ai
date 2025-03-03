@@ -31,6 +31,7 @@ class Tetris extends Component {
     super(props);
     this.state = {
       tetris_state: new NESTetrisGame(0),
+      audioRef: createRef(),
       paused: false,
     };
 
@@ -143,6 +144,16 @@ class Tetris extends Component {
         };
       });
       break;
+    case 'm':
+    case 'M':
+      e.preventDefault();
+      let audio = this.state.audioRef.current;
+      if (audio.paused) {
+        audio.play();
+      } else {
+        audio.pause();
+      }
+      break;
     default:
       break;
     }
@@ -166,9 +177,11 @@ class Tetris extends Component {
   render() {
     return (
       <div style={styles.root}>
+        <audio ref={this.state.audioRef} src="./assets/sounds/theme.mp3" autoPlay loop/>
         <NavBar title="Tetris"/>
         <div style={styles.main}>
           <h1>Tetris Page!</h1>
+          <p>Enter to pause. Arrow keys to move. Z/X to rotate. Shift+R to Reset. M for music.</p>
           <p>
             Level:&nbsp;
             <select name="level" id="level-select" style={styles.levelSelect} onChange={this.onNewLevel.bind(this)}>

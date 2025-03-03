@@ -7,9 +7,9 @@ const styles: Record<string, CSSProperties> = {
   main: {
     padding: "10pt 20pt",
   },
-};
+}
 
-class Home extends Component {
+class Atoms extends Component {
   constructor(props) {
     super(props);
     this.state = {};
@@ -18,14 +18,15 @@ class Home extends Component {
   render() {
     return (
       <div style={styles.root}>
-        <NavBar title="Home"/>
+        <NavBar title="Atoms"/>
         <div style={styles.main}>
-          <h1>Home Page!</h1>
-          <p>This is the home page</p>
+          <h1><i>Atom Simulator</i></h1>
+          <p>V for Vectorfield, R for Reset</p>
+          <br/>
         </div>
       </div>
     );
   }
 }
 
-export default Home;
+export default Atoms;

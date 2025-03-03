@@ -9,6 +9,9 @@ const CopyWebpackPlugin = require('copy-webpack-plugin');
 const CopyWebpackPluginConfig = new CopyWebpackPlugin({
   patterns: [
     {from:'assets', to:'assets', noErrorOnMissing: true},
+    {from:'atoms', to:'atoms', noErrorOnMissing: false},
+    {from:'wordle', to:'wordle', noErrorOnMissing: false},
+    {from:'pathfinding', to:'pathfinding', noErrorOnMissing: false},
   ],
 });
 

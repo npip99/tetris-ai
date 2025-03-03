@@ -70,6 +70,10 @@ class NavBar extends Component {
         link: "/tetris",
       },
       {
+        title: "Atoms",
+        link: "/atoms/atoms.html",
+      },
+      {
         title: "About",
         link: "/about",
       },
@@ -79,7 +83,7 @@ class NavBar extends Component {
       <div style={styles.root}>
         <div style={styles.left}>
           <div>
-            <h2 style={styles.logo}>Tetris AI</h2>
+            <h2 style={styles.logo}>Tetris & More!</h2>
           </div>
         </div>
         <div style={styles.right}>
